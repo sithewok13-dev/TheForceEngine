@@ -18,9 +18,10 @@
 
 #ifdef __linux__
 #include "linux/steamlnx.h"
+#endif
+
 #ifdef TFE_IOS
 #include <iosApp.h>
-#endif
 #endif
 
 using namespace TFE_IniParser;
