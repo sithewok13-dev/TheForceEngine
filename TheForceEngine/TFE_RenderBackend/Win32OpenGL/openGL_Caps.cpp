@@ -3,6 +3,9 @@
 #include <assert.h>
 #include <algorithm>
 #include <SDL_video.h>
+#ifdef TFE_IOS
+#include <iosAngle.h>
+#endif
 
 enum CapabilityFlags
 {
@@ -39,6 +42,29 @@ namespace OpenGL_Caps
 		glGetIntegerv(GL_MAJOR_VERSION, &gl_maj);
 		glGetIntegerv(GL_MINOR_VERSION, &gl_min);
 
+#ifdef TFE_GLES
+		// OpenGL ES 3.0 (iOS, ANGLE on Metal): everything the software
+		// renderer and its GPU blit / color conversion use is core in ES 3.0.
+		// There are no texture buffers (samplerBuffer), which the GPU renderer
+		// needs, so it is not offered (deviceSupportsGpuRenderer()).
+		if (gl_maj >= 3)
+		{
+			m_supportFlags = CAP_PBO | CAP_VBO | CAP_FBO | CAP_UBO | CAP_NON_POW_2 | CAP_TEXTURE_ARRAY;
+			if (SDL_GL_ExtensionSupported("GL_EXT_texture_filter_anisotropic"))
+			{
+				m_supportFlags |= CAP_ANISO;
+				glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &m_maxAnisotropy);
+			}
+			else
+			{
+				m_maxAnisotropy = 0.0f;
+			}
+			m_textureBufferMaxSize = 0;
+			m_deviceTier = DEV_TIER_2;
+		}
+		(void)glGetError();
+		return;
+#endif
 		bool isMacOS = (strcmp(SDL_GetPlatform(), "Mac OS X") == 0);
 
 		if (isMacOS && gl_maj >= 4) {
@@ -152,6 +178,9 @@ namespace OpenGL_Caps
 
 	bool deviceSupportsGpuRenderer()
 	{
+	#ifdef TFE_GLES
+		return false;	// needs texture buffers, which OpenGL ES 3.0 lacks
+	#endif
 		return m_deviceTier > DEV_TIER_1;
 	}
 

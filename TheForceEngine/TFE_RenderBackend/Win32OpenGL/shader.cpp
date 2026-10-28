@@ -37,12 +37,34 @@ bool Shader::create(const char* vertexShaderGLSL, const char* fragmentShaderGLSL
 	m_shaderVersion = version;
 
 	const GLchar* version_string;
+#ifdef TFE_GLES
+	// OpenGL ES 3.0 (iOS, ANGLE): GLSL ES 3.00 takes the same in/out/texture()
+	// shaders as desktop GLSL 1.30/3.30, plus default precisions. (sampler2D
+	// has a default precision in fragment shaders; the others don't.)
+	version_string =
+		"#version 300 es\n"
+		"precision highp float;\n"
+		"precision highp int;\n"
+		"precision highp sampler2D;\n"
+		"precision highp sampler2DArray;\n"
+		"precision highp sampler3D;\n"
+		"precision highp usampler2D;\n"
+		"precision highp isampler2D;\n";
+	// GLSL ES only allows ASCII, even in comments (blit.frag has a dash from
+	// a Windows code page): blank anything else out.
+	std::string vertexSource = vertexShaderGLSL, fragmentSource = fragmentShaderGLSL;
+	for (char& c : vertexSource)   { if ((unsigned char)c > 127) { c = ' '; } }
+	for (char& c : fragmentSource) { if ((unsigned char)c > 127) { c = ' '; } }
+	vertexShaderGLSL = vertexSource.c_str();
+	fragmentShaderGLSL = fragmentSource.c_str();
+#else
 	if (strcmp(SDL_GetPlatform(), "Mac OS X") == 0) {
 		// Force GLSL version 410 for macOS
 		version_string = "#version 410\n";
 	} else {
 		version_string = ShaderGL::c_glslVersionString[m_shaderVersion];
 	}
+#endif
 
 	const GLchar *vertex_shader_with_version[3] = { version_string, defineString ? defineString : "", vertexShaderGLSL };
 	u32 vertHandle = glCreateShader(GL_VERTEX_SHADER);

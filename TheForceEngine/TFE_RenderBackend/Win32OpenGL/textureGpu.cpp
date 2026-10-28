@@ -248,7 +248,25 @@ void TextureGpu::clearSlots(u32 count, u32 start/* = 0*/)
 
 void TextureGpu::readCpu(u8* image)
 {
+#ifdef TFE_GLES
+	// OpenGL ES has no glGetTexImage: read the texture through a framebuffer.
+	GLint prevFramebuffer = 0;
+	glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFramebuffer);
+	GLuint fbo = 0;
+	glGenFramebuffers(1, &fbo);
+	glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, m_gpuHandle, 0);
+	if (glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE)
+	{
+		glPixelStorei(GL_PACK_ALIGNMENT, 1);
+		glReadPixels(0, 0, m_width, m_height, GL_RGBA, GL_UNSIGNED_BYTE, image);
+		glPixelStorei(GL_PACK_ALIGNMENT, 4);
+	}
+	glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)prevFramebuffer);
+	glDeleteFramebuffers(1, &fbo);
+#else
 	glBindTexture(GL_TEXTURE_2D, m_gpuHandle);
 	glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, image);
 	glBindTexture(GL_TEXTURE_2D, 0);
+#endif
 }

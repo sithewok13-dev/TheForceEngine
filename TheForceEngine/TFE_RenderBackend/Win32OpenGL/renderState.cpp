@@ -216,6 +216,11 @@ namespace TFE_RenderState
 	
 	void enableClipPlanes(s32 count)
 	{
+	#ifdef TFE_GLES
+		// No clip distances in OpenGL ES 3.0; only the GPU renderer uses them,
+		// and it isn't offered there.
+		return;
+	#endif
 		if (s_clipPlaneCount != count)
 		{
 			// Disable unused planes.

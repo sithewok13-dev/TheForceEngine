@@ -2330,6 +2330,17 @@ static int glad_gl_find_core_gl(void) {
 
     GLAD_IMPL_UTIL_SSCANF(version, "%d.%d", &major, &minor);
 
+#ifdef TFE_GLES
+    /* TFE on OpenGL ES 3.0 (iOS, through ANGLE): load every entry point the
+     * context has, whatever desktop version it first appeared in (ES 3.0
+     * has functions from desktop 4.1-4.3 too); the ones ES lacks stay NULL
+     * and TFE doesn't call them there. */
+    if (i < 4 && major >= 3) {
+        major = 4;
+        minor = 6;
+    }
+#endif
+
     GLAD_GL_VERSION_1_0 = (major == 1 && minor >= 0) || major > 1;
     GLAD_GL_VERSION_1_1 = (major == 1 && minor >= 1) || major > 1;
     GLAD_GL_VERSION_1_2 = (major == 1 && minor >= 2) || major > 1;

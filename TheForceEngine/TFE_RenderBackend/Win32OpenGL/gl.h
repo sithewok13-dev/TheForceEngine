@@ -5243,6 +5243,24 @@ GLAD_API_CALL PFNGLWINDOWPOS3SVPROC glad_glWindowPos3sv;
 GLAD_API_CALL int gladLoadGLUserPtr( GLADuserptrloadfunc load, void *userptr);
 GLAD_API_CALL int gladLoadGL( GLADloadfunc load);
 
+#ifdef TFE_GLES
+/* TFE on OpenGL ES 3.0 (iOS, through ANGLE): the ES names for the few desktop
+ * OpenGL calls TFE makes on the software renderer's path, and no-ops for the
+ * ones ES 3.0 has no equivalent for (wireframe, texture buffers: only the
+ * editor and the GPU renderer use them, and neither is offered there). */
+#undef glClearDepth
+#define glClearDepth glClearDepthf
+#undef glDepthRange
+#define glDepthRange glDepthRangef
+#undef glFramebufferTexture
+#define glFramebufferTexture(target, attachment, texture, level) \
+	glFramebufferTexture2D(target, attachment, GL_TEXTURE_2D, texture, level)
+#undef glPolygonMode
+#define glPolygonMode(face, mode) ((void)0)
+#undef glTexBuffer
+#define glTexBuffer(target, internalformat, buffer) ((void)0)
+#endif
+
 
 
 #ifdef __cplusplus

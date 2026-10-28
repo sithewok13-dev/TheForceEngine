@@ -15,6 +15,9 @@
 #include "renderTarget.h"
 #include "screenCapture.h"
 #include <SDL.h>
+#ifdef TFE_IOS
+#include <iosAngle.h>	// SDL_GL_* -> ANGLE (OpenGL ES 3.0 on Metal)
+#endif
 #include "gl.h"
 #include <stdio.h>
 #include <assert.h>
@@ -184,6 +187,9 @@ namespace TFE_RenderBackend
 	{
 		u32 windowFlags = SDL_WINDOW_OPENGL;
 		bool windowed = !(state.flags & WINFLAG_FULLSCREEN);
+	#ifdef TFE_IOS
+		windowed = false;	// always the whole screen
+	#endif
 		s_isMacOS = (strcmp(SDL_GetPlatform(), "Mac OS X") == 0);
 
 		TFE_Settings_Window* windowSettings = TFE_Settings::getWindowSettings();
@@ -209,6 +215,13 @@ namespace TFE_RenderBackend
 		}
 
 		SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, true);
+	#if defined(TFE_GLES) && !defined(TFE_IOS)
+		// An OpenGL ES 3.0 context on other systems, to test iOS's GL path
+		// there (iOS itself gets its context from ANGLE, ios/iosAngle.cpp).
+		SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
+		SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+		SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+	#endif
 
 		if (s_isMacOS) {
 			// macOS specific OpenGL context setup
@@ -271,6 +284,14 @@ namespace TFE_RenderBackend
 		{
 			uiScale = 150;
 		}
+
+	#ifdef TFE_IOS
+		// The window is in points (SDL_WINDOW_ALLOW_HIGHDPI is off, so the
+		// Metal layer is too): TFE's menus at their normal size are about the
+		// size of iOS's own text. Touches get a little extra room around
+		// each control (TFE_Ui::init).
+		uiScale = 100;
+	#endif
 
 		if (s_isMacOS) {
 			// macOS specific setup:
