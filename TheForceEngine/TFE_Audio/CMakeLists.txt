@@ -1,6 +1,6 @@
 file(GLOB_RECURSE SOURCES "*.cpp" "*.c")
-if(LINUX)
-	# we use the system libraries on Linux
+if(LINUX OR IOS)
+	# we use the system libraries on Linux; iOS has no system MIDI output
 	list(REMOVE_ITEM SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/RtMidi.cpp")
 endif()
 if(NOT ENABLE_SYSMIDI)

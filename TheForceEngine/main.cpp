@@ -44,6 +44,10 @@
 
 #include <TFE_Audio/midiPlayer.h>
 
+#ifdef TFE_IOS
+#include <iosApp.h>
+#endif
+
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN 1
 #include <Windows.h>
@@ -499,6 +503,19 @@ bool validatePath()
 
 int main(int argc, char* argv[])
 {
+#ifdef TFE_IOS
+	// (SDL2main's main() has started UIKit and calls this as SDL_main.)
+	// Sound plays with the phone on silent; then, until the player's Dark
+	// Forces files are in the app's Documents folder, a screen says what to
+	// copy where.
+	SDL_SetHint(SDL_HINT_AUDIO_CATEGORY, "playback");
+	// the home indicator dims, and a first swipe from an edge goes to the game
+	SDL_SetHint(SDL_HINT_IOS_HIDE_HOME_INDICATOR, "2");
+	// the phone's tilt is not a joystick
+	SDL_SetHint(SDL_HINT_ACCELEROMETER_AS_JOYSTICK, "0");
+	IOS_AppInit();
+#endif
+
 	#if INSTALL_CRASH_HANDLER
 	TFE_CrashHandler::setProcessExceptionHandlers();
 	TFE_CrashHandler::setThreadExceptionHandlers();
@@ -642,7 +659,12 @@ int main(int argc, char* argv[])
 	// Start up the game and skip the title screen.
 	if (firstRun)
 	{
+	#ifdef TFE_IOS
+		// iOS defaults in place of the defaults window (wider than a phone)
+		TFE_FrontEndUI::setIOSDefaults();
+	#else
 		TFE_FrontEndUI::setAppState(APP_STATE_SET_DEFAULTS);
+	#endif
 	}
 	else if (s_startupGame >= Game_Dark_Forces && validatePath())
 	{

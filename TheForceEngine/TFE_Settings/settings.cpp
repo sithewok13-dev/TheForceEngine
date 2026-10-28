@@ -18,6 +18,9 @@
 
 #ifdef __linux__
 #include "linux/steamlnx.h"
+#ifdef TFE_IOS
+#include <iosApp.h>
+#endif
 #endif
 
 using namespace TFE_IniParser;
@@ -212,6 +215,20 @@ namespace TFE_Settings
 				}
 			}
 
+#ifdef TFE_IOS
+			// iOS: the game folder the player copied into the app's Documents
+			// folder (the path changes with each install, so it is found again
+			// whenever the saved one is gone).
+			if (!pathValid && gameId == Game_Dark_Forces)
+			{
+				char gamePath[TFE_MAX_PATH];
+				if (IOS_FindGameFolder(gamePath, TFE_MAX_PATH) && validatePath(gamePath, c_validationFile[gameId]))
+				{
+					strcpy(s_gameSettings.header[gameId].sourcePath, gamePath);
+					pathValid = true;
+				}
+			}
+#endif
 #ifdef _WIN32
 			// Next try looking through the registry.
 			if (!pathValid)
@@ -299,6 +316,14 @@ namespace TFE_Settings
 			settings.close();
 
 			parseIniFile(s_iniBuffer.data(), len);
+		#ifdef TFE_GLES
+			// Only the software renderer on OpenGL ES 3.0 (iOS).
+			s_graphicsSettings.rendererIndex = 0;
+			if (s_graphicsSettings.colorMode == COLORMODE_TRUE_COLOR) { s_graphicsSettings.colorMode = COLORMODE_8BIT_INTERP; }
+		#endif
+		#ifdef TFE_IOS
+			s_windowSettings.fullscreen = true;
+		#endif
 			autodetectGamePaths();
 
 			return true;

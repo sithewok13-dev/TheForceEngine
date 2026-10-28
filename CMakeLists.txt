@@ -56,6 +56,15 @@ option(ENABLE_EDITOR "Enable TFE Editor" OFF)
 option(ENABLE_OGV_CUTSCENES "Enable OGV (Ogg Theora) video cutscene support" OFF)
 option(ENABLE_ADJUSTABLEHUD_MOD "Install the build‑in 'AdjustableHud mod' with TFE" ON)
 
+# iOS (iPhone/iPad): the Dark Forces app, see ios/ and docs/ios/README.md.
+# No system MIDI there (TFE's own synths play the music), and SDL2 comes from
+# the static libraries ios/build-deps.sh builds.
+if(IOS)
+	set(ENABLE_SYSMIDI OFF CACHE BOOL "" FORCE)
+	set(ENABLE_EDITOR OFF CACHE BOOL "" FORCE)
+	set(ENABLE_OGV_CUTSCENES OFF CACHE BOOL "" FORCE)
+endif()
+
 if(ENABLE_TFE)
 	add_executable(tfe)
 
@@ -66,7 +75,18 @@ if(ENABLE_TFE)
 		set_target_properties(tfe PROPERTIES OUTPUT_NAME "theforceengine")
 	endif()
 
-	if(UNIX)
+	if(IOS)
+		find_package(SDL2 REQUIRED CONFIG)
+		find_package(SDL2_image REQUIRED CONFIG)
+		# SDL2main is iOS's main(): it starts UIKit, then calls TFE's main()
+		target_link_libraries(tfe PRIVATE SDL2::SDL2main SDL2::SDL2-static SDL2_image::SDL2_image-static)
+		target_include_directories(tfe PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+		# TFE_IOS: the app's own code; TFE_GLES: OpenGL ES 3.0 (ANGLE) in place
+		# of desktop OpenGL 3.3
+		add_definitions(-DTFE_IOS=1 -DTFE_GLES=1)
+		set(IOS_APP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/ios")
+		include(ios/ios_app.cmake)
+	elseif(UNIX)
 		set(THREADS_PREFER_PTHREAD_FLAG ON)
 		find_package(Threads REQUIRED)
 		find_package(PkgConfig REQUIRED)

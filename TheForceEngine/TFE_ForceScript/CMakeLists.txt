@@ -2,6 +2,13 @@ file(GLOB_RECURSE SOURCES "*.cpp" "*.c")
 
 set(ARCHFLAGS "${CMAKE_SYSTEM_PROCESSOR}")
 
+if(IOS)
+	# iOS (arm64): AngelScript's native calling convention code for Apple's
+	# arm64, in the Xcode assembler's syntax; nothing from the branches below.
+	list(APPEND SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Angelscript/angelscript/source/as_callfunc_arm64_xcode.S")
+	set(ARCHFLAGS "ios")
+endif()
+
 if (APPLE AND NOT IOS)
     # TODO: Would this break building on armv7 Linux?
     if (${CMAKE_SYSTEM_PROCESSOR} MATCHES "arm")

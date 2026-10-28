@@ -11,8 +11,11 @@
 #include <string>
 #include <SDL.h>
 
-#ifdef __APPLE__
+#if defined(__APPLE__) && !defined(TFE_IOS)
 #include <CoreServices/CoreServices.h>
+#endif
+#ifdef TFE_IOS
+#include <iosApp.h>
 #endif
 
 namespace FileUtil {
@@ -50,6 +53,17 @@ namespace TFE_Paths
 	// to the cwd; otherwise store in $HOME/.local/share/<tfe>/
 	static void setTFEPath(const char *tfe, u32 pathid)
 	{
+#ifdef TFE_IOS
+		// iOS: TFE's internal data (temporary mod files) in the app's
+		// Application Support folder, which Files doesn't show.
+		{
+			char path[TFE_MAX_PATH];
+			snprintf(path, TFE_MAX_PATH, "%s/Library/Application Support/%s/", getenv("HOME"), tfe);
+			s_paths[pathid] = path;
+			FileUtil::makeDirectory(path);
+			return;
+		}
+#endif
 		char *home = getenv("HOME"), *tdh = getenv("TFE_DATA_HOME");
 		char path[TFE_MAX_PATH], cwd[TFE_MAX_PATH];
 		int i;
@@ -140,7 +154,15 @@ namespace TFE_Paths
 		// ensure SetProgramDataPath() was called before
 		assert(!s_paths[PATH_PROGRAM_DATA].empty());
 
+#ifdef TFE_IOS
+		// iOS: settings, saves, screenshots, replays and the log in the app's
+		// Documents folder (Files > On My iPhone > Dark Forces > TheForceEngine),
+		// where the player can see and back them up, beside the game's files.
+		s_paths[PATH_USER_DOCUMENTS] = std::string(IOS_DocumentsPath()) + append + "/";
+		FileUtil::makeDirectory(s_paths[PATH_USER_DOCUMENTS].c_str());
+#else
 		s_paths[PATH_USER_DOCUMENTS] = s_paths[PATH_PROGRAM_DATA];
+#endif
 		s_systemPaths.push_back(getPath(PATH_USER_DOCUMENTS));
 		// set cwd to user documents path, because Dear ImGUI drops
 		// its ini file at the cwd, we don't want it to litter somewhere
@@ -160,6 +182,16 @@ namespace TFE_Paths
 			s_paths[PATH_REMASTER_DOCS] = s_paths[PATH_PROGRAM];
 			return true;
 		}
+#ifdef TFE_IOS
+		// iOS: the remaster's own files (DARKPILO.CFG, its cutscenes) are
+		// looked for in the game folder the player copied in.
+		{
+			char gamePath[TFE_MAX_PATH];
+			if (game != Game_Dark_Forces || !IOS_FindGameFolder(gamePath, TFE_MAX_PATH)) { return false; }
+			s_paths[PATH_REMASTER_DOCS] = gamePath;
+			return true;
+		}
+#endif
 		string strId = to_string((int)TFE_Settings::c_steamRemasterProductId[game]);
 		string append = "~/.steam/steam/steamapps/compatdata/" + strId + "/pfx/drive_c/users/steamuser/Saved Games/Nightdive Studios";
 
@@ -402,6 +434,11 @@ namespace TFE_Paths
 	// TFE directory.
 	bool isPortableInstall()
 	{
+	#ifdef TFE_IOS
+		// never on iOS (and the working folder is TFE's own Documents folder,
+		// which does hold a settings.ini)
+		return false;
+	#endif
 		return FileUtil::exists("settings.ini");
 	}
 
