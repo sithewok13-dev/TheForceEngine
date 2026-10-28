@@ -748,7 +748,11 @@ namespace TFE_DarkForces
 		// Alt+Enter (fullscreen toggle) so it doesn't double as a skip.
 		if (TFE_Input::keyPressed(KEY_ESCAPE) ||
 			(TFE_Input::keyPressed(KEY_RETURN) && !TFE_Input::keyDown(KEY_LALT) && !TFE_Input::keyDown(KEY_RALT)) ||
-			TFE_Input::keyPressed(KEY_SPACE))
+			TFE_Input::keyPressed(KEY_SPACE)
+#ifdef TFE_IOS
+			|| TFE_Input::mousePressed(MBUTTON_LEFT)	// iOS: a tap skips
+#endif
+			)
 		{
 			ogvCutscene_teardown();
 			return JFALSE;

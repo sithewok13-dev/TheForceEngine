@@ -211,7 +211,11 @@ namespace TFE_DarkForces
 		// TFE: Added since inputs can be skipped at low framerates.
 		// Ignore Enter key if player is pressing Alt-Enter (to switch between windowed and fullscreen)
 		if (TFE_Input::keyPressed(KEY_ESCAPE) || (TFE_Input::keyPressed(KEY_RETURN) && !TFE_Input::keyDown(KEY_LALT) 
-			&& !TFE_Input::keyDown(KEY_RALT)))
+			&& !TFE_Input::keyDown(KEY_RALT))
+#ifdef TFE_IOS
+			|| TFE_Input::mousePressed(MBUTTON_LEFT)	// iOS: a tap skips, like Escape
+#endif
+			)
 		{
 			s_skipSceneInput = JTRUE;
 		}
