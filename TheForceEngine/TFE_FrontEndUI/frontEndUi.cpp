@@ -728,7 +728,16 @@ namespace TFE_FrontEndUI
 			}
 			else
 			{
+			#ifdef TFE_IOS
+				// iOS: no Editor (not built) and no Exit (iOS apps aren't quit
+				// from inside), and the buttons' real height (button, frame
+				// padding, item spacing), so that the menu clears the title on
+				// a phone's short screen.
+				const s32 visibleItemCount = s32(s_menuItemCount) - 2;
+				s32 menuHeight = (textHeight + 10) * visibleItemCount + 16;
+			#else
 				s32 menuHeight = (textHeight + 24) * s_menuItemCount + 4;
+			#endif
 
 				// Main Menu
 				ImGui::PushFont(s_menuFont);
@@ -742,6 +751,9 @@ namespace TFE_FrontEndUI
 				ImVec2 textSize = ImVec2(f32(textWidth), f32(textHeight));
 				for (s32 i = 0; i < s_menuItemCount; i++)
 				{
+				#ifdef TFE_IOS
+					if (s_menuItemselected[i] == menuItem_Editor || s_menuItemselected[i] == menuItem_Exit) { continue; }
+				#endif
 				#if ENABLE_EDITOR == 0
 					// Disable the editor for now when not running on Windows.
 					if (s_menuItemselected[i] == menuItem_Editor)
@@ -1144,11 +1156,13 @@ namespace TFE_FrontEndUI
 				TFE_Paths::setPath(PATH_SOURCE_DATA, darkForces->sourcePath);
 			}
 		}
+	#ifndef TFE_IOS	// no file dialogs on iOS: the app finds the game in its Documents folder
 		ImGui::SameLine();
 		if (ImGui::Button("Browse##DarkForces"))
 		{
 			browseWinOpen = 0;
 		}
+	#endif
 
 		ImGui::Text("Outlaws:"); ImGui::SameLine(100*s_uiScale);
 		convertExtendedAsciiToUtf8(outlaws->sourcePath, utf8Path);
@@ -1157,11 +1171,13 @@ namespace TFE_FrontEndUI
 			convertUtf8ToExtendedAscii(utf8Path, outlaws->sourcePath);
 			// TODO
 		}
+	#ifndef TFE_IOS	// no file dialogs on iOS: the app finds the game in its Documents folder
 		ImGui::SameLine();
 		if (ImGui::Button("Browse##Outlaws"))
 		{
 			browseWinOpen = 1;
 		}
+	#endif
 		ImGui::Separator();
 
 		//////////////////////////////////////////////////////
@@ -3206,7 +3222,14 @@ namespace TFE_FrontEndUI
 
 		ImGui::LabelText("##ConfigLabel", "Renderer:"); ImGui::SameLine(75 * s_uiScale);
 		ImGui::SetNextItemWidth(196 * s_uiScale);
+	#ifdef TFE_GLES
+		// Only the software renderer on OpenGL ES 3.0 (iOS): the GPU renderer
+		// needs texture buffers.
+		graphics->rendererIndex = 0;
+		ImGui::Combo("##Renderer", &graphics->rendererIndex, c_renderer, 1);
+	#else
 		ImGui::Combo("##Renderer", &graphics->rendererIndex, c_renderer, IM_ARRAYSIZE(c_renderer));
+	#endif
 		if (graphics->rendererIndex == 0)
 		{
 			// Software
@@ -3717,6 +3740,27 @@ namespace TFE_FrontEndUI
 		return currentFilePath;
 	}
 
+#ifdef TFE_IOS
+	// First launch on iOS: the Retro template (widescreen at the screen's own
+	// resolution, modern game options) on the software renderer, in place of
+	// the "Select Default Settings" window, which is wider than a phone.
+	void setIOSDefaults()
+	{
+		setSettingsTemplate(TEMPLATE_RETRO);
+
+		TFE_Settings_Window* windowSettings = TFE_Settings::getWindowSettings();
+		TFE_Settings_Graphics* graphicsSettings = TFE_Settings::getGraphicsSettings();
+		windowSettings->fullscreen = true;
+		graphicsSettings->vsync = true;
+		graphicsSettings->rendererIndex = RENDERER_SOFTWARE;
+		graphicsSettings->colorMode = COLORMODE_8BIT;
+		graphicsSettings->widescreen = true;
+		graphicsSettings->bloomEnabled = false;
+		pickCurrentResolution();
+		TFE_Settings::writeToDisk();
+	}
+#endif
+
 	void pickCurrentResolution()
 	{
 		TFE_Settings_Graphics* graphics = TFE_Settings::getGraphicsSettings();
@@ -4185,6 +4229,16 @@ namespace TFE_FrontEndUI
 				return;
 			}
 		}
+
+	#ifdef TFE_GLES
+		// The software renderer only on OpenGL ES 3.0 (iOS), and its 8-bit
+		// color modes.
+		graphicsSettings->rendererIndex = RENDERER_SOFTWARE;
+		if (graphicsSettings->colorMode == COLORMODE_TRUE_COLOR)
+		{
+			graphicsSettings->colorMode = COLORMODE_8BIT_INTERP;
+		}
+	#endif
 
 		TFE_Settings::writeToDisk();
 		inputMapping_serialize();

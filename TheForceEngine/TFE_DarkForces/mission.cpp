@@ -534,6 +534,9 @@ namespace TFE_DarkForces
 
 	void mission_render(s32 rendererIndex, bool forceTextureUpdate)
 	{
+	#ifdef TFE_GLES
+		rendererIndex = 0;	// only the software renderer on OpenGL ES 3.0 (iOS)
+	#endif
 		if (task_getCount() > 1 && s_missionMode == MISSION_MODE_MAIN)
 		{
 			TFE_Jedi::renderer_setType(rendererIndex == 0 ? RENDERER_SOFTWARE : RENDERER_HARDWARE);

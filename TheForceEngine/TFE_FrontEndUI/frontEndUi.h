@@ -32,6 +32,9 @@ struct IGame;
 namespace TFE_FrontEndUI
 {
 	void init();
+#ifdef TFE_IOS
+	void setIOSDefaults();	// first launch on iOS
+#endif
 	void initConsole();
 	void shutdown();
 
