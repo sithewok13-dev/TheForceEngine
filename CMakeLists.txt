@@ -77,6 +77,14 @@ if(ENABLE_TFE)
 
 	if(IOS)
 		find_package(SDL2 REQUIRED CONFIG)
+		# SDL2_image is built with stb_image (ios/build-deps.sh), but its
+		# installed config still asks for libjpeg and libpng: empty stand-ins
+		# satisfy it (nothing links to them).
+		foreach(dep JPEG::JPEG PNG::PNG)
+			if(NOT TARGET ${dep})
+				add_library(${dep} INTERFACE IMPORTED)
+			endif()
+		endforeach()
 		find_package(SDL2_image REQUIRED CONFIG)
 		# SDL2main is iOS's main(): it starts UIKit, then calls TFE's main()
 		target_link_libraries(tfe PRIVATE SDL2::SDL2main SDL2::SDL2-static SDL2_image::SDL2_image-static)
