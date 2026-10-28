@@ -1,0 +1,240 @@
+# Builds the Dark Forces app for iOS (arm64 device): The Force Engine with its
+# software renderer, presented through OpenGL ES 3.0 on ANGLE (Metal), and
+# packages it as an UNSIGNED .ipa (ad-hoc signature only), kept as a workflow
+# artifact. Sideload it (SideStore, AltStore, Sideloadly).
+#
+# No game data is built in or bundled: the app reads the player's own Dark
+# Forces files from its Documents folder (Files > On My iPhone > Dark Forces).
+# The package step fails if a game archive ever ends up in the app.
+name: iOS
+
+on:
+  push:
+    branches: [ios]
+    paths-ignore:
+      - '**.md'
+      - '**.png'
+  workflow_dispatch:
+
+# a newer push waits for the running build (rather than cancelling a long
+# ANGLE build); a build still waiting is replaced by the newest
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # Must match between ANGLE and the app: dyld refuses to load a framework
+  # built for a newer iOS than the phone's.
+  IOS_DEPLOYMENT_TARGET: '18.0'
+  # ANGLE (OpenGL ES on Metal), built here and cached; the same revision the
+  # DOOM 3 and Jedi Knight ports ship: branch chromium/8060 (Sept 15 2026), from the
+  # github.com/google/angle mirror. To rebuild, change ANGLE_REV or bump
+  # ANGLE_CACHE_VERSION.
+  ANGLE_REV: 4b7308a36376199c095ccb0ab69b773daa8b9fbe
+  ANGLE_CACHE_VERSION: v1
+
+jobs:
+  build:
+    name: Dark Forces
+    runs-on: macos-15
+    # ANGLE's first (uncached) build is long
+    timeout-minutes: 330
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # The newest release Xcode on the runner rather than its default.
+      - name: Select newest Xcode
+        id: xcode
+        run: |
+          XCODE=$(ls -d /Applications/Xcode_*.app | grep -iv beta | sort -V | tail -1)
+          sudo xcode-select -s "$XCODE/Contents/Developer"
+          xcodebuild -version
+          echo "version=$(xcodebuild -version | head -1 | tr ' ' '-')" >> "$GITHUB_OUTPUT"
+          which ninja || brew install ninja
+
+      # ANGLE is built with Chromium's own tools (depot_tools, gn), as in the
+      # Jedi Knight port's workflow: slow the first time, then cached.
+      - name: Restore ANGLE
+        id: angle
+        uses: actions/cache/restore@v4
+        with:
+          path: angle-prebuilt
+          key: angle-ios-arm64-${{ env.ANGLE_REV }}-ios${{ env.IOS_DEPLOYMENT_TARGET }}-${{ env.ANGLE_CACHE_VERSION }}
+
+      - name: Free disk space for ANGLE
+        if: steps.angle.outputs.cache-hit != 'true'
+        run: |
+          sudo rm -rf ~/Library/Android /usr/local/share/dotnet ~/.dotnet /usr/local/lib/node_modules || true
+          df -h /
+
+      - name: Build ANGLE
+        if: steps.angle.outputs.cache-hit != 'true'
+        run: |
+          set -ex
+          git clone --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git "$RUNNER_TEMP/depot_tools"
+          export PATH="$RUNNER_TEMP/depot_tools:$PATH"
+
+          mkdir -p "$RUNNER_TEMP/angle" && cd "$RUNNER_TEMP/angle"
+          git init -q
+          git fetch --depth 1 https://github.com/google/angle "$ANGLE_REV"
+          git checkout -q FETCH_HEAD
+
+          # an unmanaged solution rooted at this checkout, for iOS, without
+          # the (large, unneeded) Dawn/WebGPU dependencies
+          cat > .gclient <<'GCLIENT'
+          solutions = [
+            {
+              "name": ".",
+              "url": "https://chromium.googlesource.com/angle/angle.git",
+              "deps_file": "DEPS",
+              "managed": False,
+              "custom_deps": {},
+              "custom_vars": {
+                "checkout_angle_dawn_deps": False,
+              },
+            },
+          ]
+          target_os = ["ios"]
+          GCLIENT
+
+          gclient sync --no-history --shallow -j8
+          gn gen out/ios --args="
+            is_debug=false
+            is_component_build=false
+            symbol_level=0
+            target_os=\"ios\"
+            target_cpu=\"arm64\"
+            target_environment=\"device\"
+            ios_deployment_target=\"$IOS_DEPLOYMENT_TARGET\"
+            ios_enable_code_signing=false
+            angle_enable_vulkan=false
+            angle_enable_swiftshader=false
+            angle_enable_wgpu=false
+            angle_build_tests=false
+          "
+          autoninja -C out/ios libEGL libGLESv2
+
+          # keep only what the build needs: include/ and the two frameworks
+          DEST="$GITHUB_WORKSPACE/angle-prebuilt"
+          mkdir -p "$DEST/out/ios"
+          cp -R include "$DEST/include"
+          cp -R out/ios/libEGL.framework out/ios/libGLESv2.framework "$DEST/out/ios/"
+
+      # saved at once, so a failure later in the job doesn't lose the slow build
+      - name: Save ANGLE
+        if: steps.angle.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: angle-prebuilt
+          key: ${{ steps.angle.outputs.cache-primary-key }}
+
+      - name: Show ANGLE
+        run: |
+          for f in libEGL libGLESv2; do
+            file "angle-prebuilt/out/ios/$f.framework/$f"
+            otool -l "angle-prebuilt/out/ios/$f.framework/$f" | grep -A4 LC_BUILD_VERSION | grep -E 'platform|minos' || true
+          done
+
+      # SDL2 and SDL2_image, built for iOS by ios/build-deps.sh (a few
+      # minutes); later runs restore them from the cache.
+      # (restore and save are separate steps so the dependencies are kept as
+      # soon as they're built, even when the app's build then fails)
+      - name: Restore dependencies
+        id: deps
+        uses: actions/cache/restore@v4
+        with:
+          path: build-ios-deps
+          key: ios-deps-${{ steps.xcode.outputs.version }}-${{ env.IOS_DEPLOYMENT_TARGET }}-${{ hashFiles('ios/build-deps.sh', 'ios/toolchain.cmake') }}
+
+      - name: Build dependencies
+        if: steps.deps.outputs.cache-hit != 'true'
+        run: ios/build-deps.sh "$PWD/build-ios-deps"
+
+      - name: Save dependencies
+        if: steps.deps.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: build-ios-deps
+          key: ${{ steps.deps.outputs.cache-primary-key }}
+
+      - name: Build
+        run: |
+          DEPS="$PWD/build-ios-deps"
+          set +e
+          {
+            cmake -S . -B build-ios -G Ninja \
+              --toolchain "$PWD/ios/toolchain.cmake" \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_PREFIX_PATH="$DEPS" -DCMAKE_FIND_ROOT_PATH="$DEPS" \
+              -DANGLE_ROOT="$PWD/angle-prebuilt" \
+              -DIOS_BUILD_NUMBER="${{ github.run_number }}" &&
+            cmake --build build-ios -- -k 0   # (every error at once, not just the first)
+          } > build.log 2>&1
+          status=$?
+          set -e
+          if [ $status -ne 0 ]; then
+            # The first errors, as annotations, so they show on the run page.
+            grep -E '(^|: )(fatal )?error: |CMake Error' build.log | sort -u | head -40 | while IFS= read -r line; do
+              echo "::error::${line#$GITHUB_WORKSPACE/}"
+            done
+            echo "---- errors ----"
+            grep -n -i -E 'error[: ]|^ld: |undefined symbol|CMake Error' build.log | head -80
+            echo "---- end of log ----"
+            tail -60 build.log
+            exit $status
+          fi
+          tail -5 build.log
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
+          if-no-files-found: ignore
+
+      - name: Package .ipa
+        run: |
+          APP=build-ios/DarkForces.app
+          test -d "$APP"
+          # Game data must never be bundled: no game archives (GOB, LFD, LAB,
+          # the remaster's KPF), no videos, no game executables.
+          FOUND=$(find "$APP" -type f \( -iname '*.gob' -o -iname '*.lfd' -o -iname '*.lab' \
+            -o -iname '*.kpf' -o -iname '*.ogv' -o -iname '*.exe' -o -iname '*.zip' \) || true)
+          if [ -n "$FOUND" ]; then
+            echo "$FOUND"
+            echo "::error::Game data found in the app bundle"
+            exit 1
+          fi
+          # ANGLE's frameworks first, then the app around them
+          for f in "$APP"/Frameworks/*.framework; do
+            codesign --force --sign - --timestamp=none "$f"
+          done
+          codesign --force --sign - --timestamp=none "$APP"
+          rm -rf Payload && mkdir Payload
+          cp -R "$APP" Payload/
+          zip -qry DarkForces-iOS-unsigned.ipa Payload
+          # the same check on the finished .ipa
+          if unzip -Z1 DarkForces-iOS-unsigned.ipa | grep -iE '\.(gob|lfd|lab|kpf|ogv|exe)$'; then
+            echo "::error::Game data found in the .ipa"
+            exit 1
+          fi
+          plutil -p Payload/DarkForces.app/Info.plist | grep -E 'CFBundleIdentifier|CFBundleDisplayName|CFBundleVersion|MinimumOSVersion|CFBundleIcons'
+          lipo -info Payload/DarkForces.app/DarkForces
+          # ANGLE is linked and bundled, Apple's OpenGL ES isn't
+          otool -L Payload/DarkForces.app/DarkForces | grep -E 'libEGL|libGLESv2'
+          ! otool -L Payload/DarkForces.app/DarkForces | grep -q OpenGLES
+          ls Payload/DarkForces.app/Frameworks
+          # TFE's own support files are in (shaders, fonts, UI images and text)
+          ls Payload/DarkForces.app/Shaders/blit.frag Payload/DarkForces.app/Fonts Payload/DarkForces.app/UI_Text/KeyText.txt > /dev/null
+          du -sh Payload/DarkForces.app
+          ls -l DarkForces-iOS-unsigned.ipa
+
+      - name: Upload .ipa
+        uses: actions/upload-artifact@v4
+        with:
+          name: DarkForces-iOS-unsigned.ipa
+          path: DarkForces-iOS-unsigned.ipa
+          if-no-files-found: error
