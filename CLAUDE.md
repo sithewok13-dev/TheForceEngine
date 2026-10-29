@@ -28,7 +28,7 @@ They own both the original Dark Forces and Nightdive's Dark Forces Remaster
   through `iosCamera_drawWorld` in `mission.cpp`, no weapon or HUD; poses,
   hiding and moves applied only while that view is drawn and put back right
   after, every frame). In selfies Kyle is the cutscene art from the
-  player's own BRIEF2.LFD / AWARD2.LFD, by the lens (true colour into the
+  player's own BRIEF2.LFD (the arms-crossed bust), by the lens (true colour into the
   saved photo via `iosCamera_compositeRGBA`, nearest colours on the software
   renderer's screen; not on screen with the GPU renderer), with a mood per
   photo; Action Freeze and the cinematic burst draw the player as

@@ -43,6 +43,8 @@
 #include <TFE_Archive/lfdArchive.h>
 #include <TFE_FileSystem/paths.h>
 #include <TFE_Settings/settings.h>
+#include <TFE_RenderBackend/renderBackend.h>
+#include <TFE_Game/reticle.h>
 #include <SDL.h>
 #include <math.h>
 #include <string.h>
@@ -406,16 +408,16 @@ namespace TFE_DarkForces
 	//////////////////////////////////////////////////////////////////
 	// Kyle in a selfie: the game's own cutscene art (the player's own
 	// LFD files, read when a selfie first needs them, never bundled):
-	// BRIEF2.LFD's "cukyle" (arms crossed, with its talking and eye frames
-	// laid on where the briefing lays them) and AWARD2.LFD's "kyle" (over
-	// the shoulder), each in its own palette. Drawn close to the lens, over
+	// BRIEF2.LFD's "cukyle" (arms crossed, facing the camera, with its
+	// talking and eye frames laid on where the briefing lays them), in its
+	// own palette. Drawn close to the lens, over
 	// the photo view: true colour into the saved photo (both renderers),
 	// and in the nearest colours of the game's palette on the software
 	// renderer's screen.
 	//////////////////////////////////////////////////////////////////
 	struct KyleImage { s32 x = 0, y = 0, w = 0, h = 0; std::vector<u32> rgba; };	// (0: see-through; else 0xffBBGGRR)
 	static bool s_kyleTried = false, s_kyleLoaded = false;
-	static KyleImage s_kyleBust, s_kyleShoulder;
+	static KyleImage s_kyleBust;
 	static std::vector<KyleImage> s_kyleTalk, s_kyleEyes;
 
 	static bool lfdRead(LfdArchive& lfd, const char* name, std::vector<u8>& out)
@@ -507,21 +509,46 @@ namespace TFE_DarkForces
 		}
 	}
 
-	// (cropped to what isn't see-through)
-	static void cropImage(KyleImage& img)
+	// The bust's hair runs off the top of the briefing's screen: a rounded
+	// crown is added above it, from the hair's own top rows, so his head is
+	// never sliced flat
+	static const s32 c_kyleCrown = 22;
+	static void addCrown(KyleImage& img)
 	{
-		s32 x0 = img.w, y0 = img.h, x1 = -1, y1 = -1;
-		for (s32 y = 0; y < img.h; y++) for (s32 x = 0; x < img.w; x++)
-		{
-			if (img.rgba[size_t(y) * img.w + x]) { x0 = min(x0, x); x1 = max(x1, x); y0 = min(y0, y); y1 = max(y1, y); }
-		}
+		if (img.w <= 0 || img.h <= 4) { return; }
+		s32 x0 = img.w, x1 = -1;
+		for (s32 x = 0; x < img.w; x++) { if (img.rgba[x]) { x0 = min(x0, x); x1 = max(x1, x); } }
 		if (x1 < x0) { return; }
+		const s32 r = c_kyleCrown;
 		KyleImage out;
-		out.x = img.x + x0; out.y = img.y + y0; out.w = x1 - x0 + 1; out.h = y1 - y0 + 1;
-		out.rgba.resize(size_t(out.w) * out.h);
-		for (s32 y = 0; y < out.h; y++)
+		out.x = img.x; out.y = img.y - r; out.w = img.w; out.h = img.h + r;
+		out.rgba.assign(size_t(out.w) * out.h, 0u);
+		memcpy(&out.rgba[size_t(r) * out.w], img.rgba.data(), img.rgba.size() * 4);
+		const f32 mid = 0.5f * f32(x0 + x1), half = 0.5f * f32(x1 - x0 + 1);
+		for (s32 k = 1; k <= r; k++)
 		{
-			memcpy(&out.rgba[size_t(y) * out.w], &img.rgba[size_t(y + y0) * img.w + x0], size_t(out.w) * 4);
+			const f32 t = f32(k) / f32(r + 1);
+			const f32 hw = half * sqrtf(1.0f - t * t) * (1.0f - 0.08f * t);
+			for (s32 x = s32(mid - hw); x <= s32(mid + hw); x++)
+			{
+				if (x < 0 || x >= img.w) { continue; }
+				// (the hair's own pixels from its top rows, picked about at
+				// random so they don't streak, drawn in towards the middle as
+				// the crown rounds off, a little darker at its edge)
+				const u32 hsh = u32(x * 73856093) ^ u32(k * 19349663);
+				const s32 sx = clamp(s32(mid + (f32(x) - mid) * half / maxf(hw, 1.0f)) + s32(hsh % 3) - 1, x0, x1);
+				const s32 sy = s32((hsh >> 4) % 3);
+				u32 c = img.rgba[size_t(sy) * img.w + sx];
+				if (!c) { c = img.rgba[sx]; }
+				if (!c) { continue; }
+				const f32 edge = fabsf(f32(x) - mid) / maxf(hw, 1.0f);
+				if (edge > 0.8f || k > r - 3)
+				{
+					const u32 d = 0xff000000u | (((c & 0xfefefe) >> 1) + ((c & 0xfcfcfc) >> 2));
+					c = d;
+				}
+				out.rgba[size_t(r - k) * out.w + x] = c;
+			}
 		}
 		img = out;
 	}
@@ -533,7 +560,7 @@ namespace TFE_DarkForces
 		u32 pal[256];
 		std::vector<u8> data, palData;
 		FilePath path;
-		// the bust, arms crossed, with its talking and eye frames
+		// the bust, arms crossed, facing the camera, with its talking and eye frames
 		if (TFE_Paths::getFilePath("BRIEF2.LFD", &path))
 		{
 			LfdArchive lfd;
@@ -544,6 +571,7 @@ namespace TFE_DarkForces
 					palFromPltt(palData, pal);
 					if (deltDecode(data.data(), data.size(), pal, s_kyleBust))
 					{
+						addCrown(s_kyleBust);
 						if (lfdRead(lfd, "kyltalkx.ANIM", data)) { animDecode(data, pal, s_kyleTalk); }
 						if (lfdRead(lfd, "kyleyesx.ANIM", data)) { animDecode(data, pal, s_kyleEyes); }
 					}
@@ -551,56 +579,31 @@ namespace TFE_DarkForces
 				lfd.close();
 			}
 		}
-		// over the shoulder
-		if (TFE_Paths::getFilePath("AWARD2.LFD", &path))
-		{
-			LfdArchive lfd;
-			if (lfd.open(path.path))
-			{
-				if (lfdRead(lfd, "award2bc.PLTT", palData) && lfdRead(lfd, "kyle.DELT", data))
-				{
-					palFromPltt(palData, pal);
-					if (deltDecode(data.data(), data.size(), pal, s_kyleShoulder)) { cropImage(s_kyleShoulder); }
-				}
-				lfd.close();
-			}
-		}
-		s_kyleLoaded = !s_kyleBust.rgba.empty() || !s_kyleShoulder.rgba.empty();
+		s_kyleLoaded = !s_kyleBust.rgba.empty();
 		return s_kyleLoaded;
 	}
 
-	// One photo's Kyle: which picture (mirrored, a face frame laid on), and
-	// where (its height and its bottom middle, as fractions of the frame's
-	// height and width; the bottom may be below the frame)
-	// (fadeL/fadeR: the picture's own edge there is a cut through him,
-	// inside the frame: it fades out rather than ending in a straight line)
-	struct KyleShot { bool on = false; KyleImage img; f32 height = 0.6f, width = 0.3f, centreX = 0.5f, bottom = 1.0f; bool cutL = false, cutR = false, fadeL = false, fadeR = false; };
-	static const f32 c_kyleFade = 0.14f;	// (of his width)
-
-	// How much of him is drawn at this column of the picture (0..256)
-	static inline s32 kyleFadeAt(const KyleShot& shot, s32 sx)
-	{
-		const f32 f = c_kyleFade * f32(shot.img.w);
-		f32 a = 1.0f;
-		if (shot.fadeL) { a = minf(a, f32(sx) / f); }
-		if (shot.fadeR) { a = minf(a, f32(shot.img.w - 1 - sx) / f); }
-		return s32(clampf(a, 0.0f, 1.0f) * 256.0f);
-	}
-
-	// Whether the picture's side is a cut through him (his body runs off it)
-	static bool kyleSideCut(const KyleImage& img, bool right)
-	{
-		s32 n = 0;
-		const s32 x = right ? img.w - 1 : 0;
-		for (s32 y = 0; y < img.h; y++) { n += img.rgba[size_t(y) * img.w + x] ? 1 : 0; }
-		return n > img.h / 5;
-	}
+	// One photo's Kyle: the picture (mirrored, a face frame laid on) and
+	// where the whole of it is, as fractions of the frame (it reaches past
+	// the frame's edges: only the frame cuts him, never the picture's own
+	// straight edges)
+	struct KyleShot { bool on = false; KyleImage img; f32 left = 0.0f, top = 0.3f, width = 0.5f, height = 1.0f; };
 	static KyleShot s_kyleShot;
+	// Rows where each side of the picture starts to cut through him (his
+	// body running off that side), and the frame's bottom must be above
+	// them on a side inside the frame
+	struct KyleCuts { s32 left, right; };
 
-	static void kyleCompose(bool shoulder, bool mirror, s32 talk, s32 eyes, KyleShot& shot)
+	static s32 sideCutRow(const KyleImage& img, bool right)
 	{
-		const KyleImage& base = shoulder ? s_kyleShoulder : s_kyleBust;
-		KyleImage img = base;
+		const s32 x = right ? img.w - 1 : 0;
+		for (s32 y = 0; y < img.h; y++) { if (img.rgba[size_t(y) * img.w + x]) { return y; } }
+		return img.h;
+	}
+
+	static void kyleCompose(bool mirror, s32 talk, s32 eyes, KyleShot& shot)
+	{
+		KyleImage img = s_kyleBust;
 		auto layOn = [&](const KyleImage& o)
 		{
 			for (s32 y = 0; y < o.h; y++) for (s32 x = 0; x < o.w; x++)
@@ -610,12 +613,8 @@ namespace TFE_DarkForces
 				if (c && tx >= 0 && ty >= 0 && tx < img.w && ty < img.h) { img.rgba[size_t(ty) * img.w + tx] = c; }
 			}
 		};
-		if (!shoulder)
-		{
-			if (talk >= 0 && talk < s32(s_kyleTalk.size())) { layOn(s_kyleTalk[talk]); }
-			if (eyes >= 0 && eyes < s32(s_kyleEyes.size())) { layOn(s_kyleEyes[eyes]); }
-			cropImage(img);
-		}
+		if (talk >= 0 && talk < s32(s_kyleTalk.size())) { layOn(s_kyleTalk[talk]); }
+		if (eyes >= 0 && eyes < s32(s_kyleEyes.size())) { layOn(s_kyleEyes[eyes]); }
 		if (mirror)
 		{
 			for (s32 y = 0; y < img.h; y++)
@@ -625,26 +624,22 @@ namespace TFE_DarkForces
 			}
 		}
 		shot.img = img;
-		shot.cutL = kyleSideCut(img, false);
-		shot.cutR = kyleSideCut(img, true);
 	}
 
 	// Where Kyle is in a frame of this size, in its pixels
 	static void kyleRect(const KyleShot& shot, s32 w, s32 h, s32* x0, s32* y0, s32* dw, s32* dh)
 	{
-		*dh = s32(shot.height * f32(h));
-		*dw = s32(shot.width * f32(w));
-		*x0 = s32(shot.centreX * f32(w)) - *dw / 2;
-		*y0 = s32(shot.bottom * f32(h)) - *dh;
+		*x0 = s32(floorf(shot.left * f32(w)));
+		*y0 = s32(floorf(shot.top * f32(h)));
+		*dw = s32(ceilf(shot.width * f32(w)));
+		*dh = s32(ceilf(shot.height * f32(h)));
 	}
 
-	// ...as fractions of the frame (for placing the camera: 0..1 across, down)
-	static void kyleRectFrac(const KyleShot& shot, f32 aspect, f32* u0, f32* v0, f32* u1, f32* v1)
+	// What of him is inside the frame (fractions, clipped to it)
+	static void kyleRectFrac(const KyleShot& shot, f32* u0, f32* v0, f32* u1, f32* v1)
 	{
-		(void)aspect;
-		const f32 dw = shot.width;
-		*u0 = shot.centreX - dw * 0.5f; *u1 = shot.centreX + dw * 0.5f;
-		*v0 = shot.bottom - shot.height; *v1 = shot.bottom;
+		*u0 = maxf(shot.left, 0.0f); *u1 = minf(shot.left + shot.width, 1.0f);
+		*v0 = maxf(shot.top, 0.0f); *v1 = 1.0f;
 	}
 
 	// On the software renderer's 8-bit frame, in the palette's nearest colours
@@ -675,18 +670,12 @@ namespace TFE_DarkForces
 		};
 		for (s32 y = max(y0, 0); y < min(y0 + dh, h); y++)
 		{
-			const s32 sy = (y - y0) * shot.img.h / dh;
+			const s32 sy = min((y - y0) * shot.img.h / dh, shot.img.h - 1);
 			u8* row = display + size_t(y) * stride;
 			for (s32 x = max(x0, 0); x < min(x0 + dw, w); x++)
 			{
-				const s32 sx = (x - x0) * shot.img.w / dw;
-				const u32 c = shot.img.rgba[size_t(sy) * shot.img.w + sx];
-				if (!c) { continue; }
-				// (the fade, dithered: 8 bits have no see-through)
-				static const u8 bayer[16] = { 0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5 };
-				const s32 a = kyleFadeAt(shot, sx);
-				if (a < 256 && a <= bayer[(y & 3) * 4 + (x & 3)] * 16 + 8) { continue; }
-				row[x] = lookup(c);
+				const u32 c = shot.img.rgba[size_t(sy) * shot.img.w + min((x - x0) * shot.img.w / dw, shot.img.w - 1)];
+				if (c) { row[x] = lookup(c); }
 			}
 		}
 	}
@@ -700,23 +689,12 @@ namespace TFE_DarkForces
 		if (dw <= 0 || dh <= 0) { return; }
 		for (s32 y = max(y0, 0); y < min(y0 + dh, h); y++)
 		{
-			const s32 sy = (y - y0) * shot.img.h / dh;
+			const s32 sy = min((y - y0) * shot.img.h / dh, shot.img.h - 1);
 			u32* row = (u32*)(p + size_t(h - 1 - y) * w * 4);
 			for (s32 x = max(x0, 0); x < min(x0 + dw, w); x++)
 			{
-				const s32 sx = (x - x0) * shot.img.w / dw;
-				const u32 c = shot.img.rgba[size_t(sy) * shot.img.w + sx];
-				if (!c) { continue; }
-				const s32 a = kyleFadeAt(shot, sx);
-				if (a >= 256) { row[x] = c; continue; }
-				const u32 d = row[x];
-				u32 out = 0xff000000u;
-				for (s32 k = 0; k < 24; k += 8)
-				{
-					const s32 cv = (c >> k) & 0xff, dv = (d >> k) & 0xff;
-					out |= u32(dv + ((cv - dv) * a >> 8)) << k;
-				}
-				row[x] = out;
+				const u32 c = shot.img.rgba[size_t(sy) * shot.img.w + min((x - x0) * shot.img.w / dw, shot.img.w - 1)];
+				if (c) { row[x] = c; }
 			}
 		}
 	}
@@ -791,8 +769,16 @@ namespace TFE_DarkForces
 		return true;
 	}
 
+	static bool s_reticleWasOn = false;	// (the crosshair, off while the photo view is drawn)
+
 	static void pc_end()
 	{
+		if (s_reticleWasOn)
+		{
+			// (a menu that opened meanwhile turns it back on as it closes)
+			if (!escapeMenu_isOpen() && !pda_isOpen()) { reticle_enable(true); }
+			s_reticleWasOn = false;
+		}
 		s_pcActive = s_pcPrepared = s_pcFailed = false;
 		s_pcPrepare = nullptr;
 		s_poseCount = 0;
@@ -874,6 +860,14 @@ namespace TFE_DarkForces
 	{
 		if (!obj || pc_isHidden(obj) || s_hiddenCount >= c_maxHidden) { return; }
 		s_hidden[s_hiddenCount++] = obj;
+	}
+
+	static void pc_unhide(SecObject* obj)
+	{
+		for (s32 i = 0; i < s_hiddenCount; i++)
+		{
+			if (s_hidden[i] == obj) { s_hidden[i] = s_hidden[--s_hiddenCount]; return; }
+		}
 	}
 
 	// How far across and up the view reaches (tangents of half the view,
@@ -975,14 +969,15 @@ namespace TFE_DarkForces
 		}
 		// What the renderer marks for the automap
 		const u32 sectorCount = s_levelState.sectorCount;
-		s_savedSectorState.resize(sectorCount * 5);
+		s_savedSectorState.resize(sectorCount * 6);
 		s_savedWallState.clear();
 		RSector* sec = s_levelState.sectors;
 		for (u32 i = 0; i < sectorCount; i++, sec++)
 		{
-			u32* st = &s_savedSectorState[i * 5];
+			u32* st = &s_savedSectorState[i * 6];
 			st[0] = sec->flags1; st[1] = u32(sec->prevDrawFrame); st[2] = u32(sec->prevDrawFrame2);
 			st[3] = u32(sec->startWall); st[4] = u32(sec->drawWallCnt);
+			st[5] = sec->dirtyFlags;	// (the GPU renderer's: what it still has to update, as first seen)
 			for (s32 w = 0; w < sec->wallCount; w++)
 			{
 				const RWall* wall = &sec->walls[w];
@@ -1004,10 +999,11 @@ namespace TFE_DarkForces
 		size_t wi = 0;
 		for (u32 i = 0; i < sectorCount; i++, sec++)
 		{
-			const u32* st = &s_savedSectorState[i * 5];
+			const u32* st = &s_savedSectorState[i * 6];
 			sec->flags1 = (sec->flags1 & ~SEC_FLAGS1_RENDERED) | (st[0] & SEC_FLAGS1_RENDERED);
 			sec->prevDrawFrame = s32(st[1]); sec->prevDrawFrame2 = s32(st[2]);
 			sec->startWall = s32(st[3]); sec->drawWallCnt = s32(st[4]);
+			sec->dirtyFlags = st[5];
 			for (s32 w = 0; w < sec->wallCount && wi + 2 < s_savedWallState.size(); w++)
 			{
 				RWall* wall = &sec->walls[w];
@@ -1188,7 +1184,8 @@ namespace TFE_DarkForces
 	static bool s_sfKyle = false;	// (this selfie is with Kyle's portrait, by the lens)
 	static f32 s_sfLensClearNow = c_sfLensClear;
 
-	struct View { V3 pos; f32 yaw, pitch, tanX, tanY, tanP; V3 fwd, right; };
+	// (gpu: the GPU renderer turns the view up and down; the classic one shears it)
+	struct View { V3 pos; f32 yaw, pitch, tanX, tanY, tanP; V3 fwd, right; bool gpu = false; };
 
 	static void makeView(View& v, V3 cam, V3 at, f32 tiltUp)
 	{
@@ -1200,6 +1197,7 @@ namespace TFE_DarkForces
 		v.tanP = tanf(v.pitch);
 		v.fwd = flatDir(v.yaw);
 		v.right = v3(cosf(v.yaw), 0.0f, -sinf(v.yaw));
+		v.gpu = TFE_Settings::getGraphicsSettings()->rendererIndex != 0;
 	}
 
 	// Where a point is in the view (across, up: fractions of the half frame;
@@ -1207,6 +1205,19 @@ namespace TFE_DarkForces
 	static void project(const View& v, V3 p, f32* fx, f32* fy, f32* fz)
 	{
 		const V3 d = p - v.pos;
+		if (v.gpu)
+		{
+			// (turned: forward and up tipped by the pitch)
+			const f32 cp = cosf(v.pitch), sp = sinf(v.pitch);
+			const V3 f3 = v3(v.fwd.x * cp, -sp, v.fwd.z * cp);
+			const V3 u3 = v3(-v.fwd.x * sp, -cp, -v.fwd.z * sp);
+			const f32 z = dot(d, f3);
+			*fz = z;
+			if (z <= 0.15f) { *fx = *fy = 99.0f; return; }
+			*fx = dot(d, v.right) / z / v.tanX;
+			*fy = dot(d, u3) / z / v.tanY;
+			return;
+		}
 		const f32 z = dot(d, v.fwd);
 		*fz = z;
 		if (z <= 0.15f) { *fx = *fy = 99.0f; return; }
@@ -1654,18 +1665,26 @@ namespace TFE_DarkForces
 	//////////////////////////////////////////////////////////////////
 	// Selfies with Kyle's portrait: Kyle holds the phone (he is the picture
 	// close to the lens, the camera an arm or a stick's length from his
-	// eyes), the enemies behind him. Each photo has a mood, a place for
-	// Kyle and a camera of its own, each different from the photo before.
+	// eyes), the enemies behind him, in the frame at a size that reads,
+	// facing the lens, nobody nearer it than he is. Each photo has a mood, a
+	// place for Kyle and a camera of its own, each different from the last.
 	//////////////////////////////////////////////////////////////////
 	enum { MOOD_POSING = 0, MOOD_PHOTOBOMB, MOOD_FIREFIGHT, MOOD_GROUP, MOOD_CHAOS, MOODS };
-	enum { KYLE_LEFT = 0, KYLE_RIGHT, KYLE_MIDDLE, KYLE_CORNER, KYLE_HALF, KYLE_PLACES };
+	enum { KYLE_SIDE = 0, KYLE_LOW, KYLE_HALF, KYLE_PEEK, KYLE_PLACES };
 	enum { CAM_EYE = 0, CAM_HIGH, CAM_LOW, CAM_STYLES };
 	enum { ARM_NEAR = 0, ARM_MID, ARM_STICK, ARMS };
-	static const s32 c_moodWeights[MOODS] = { 30, 22, 20, 13, 15 };
-	static const s32 c_placeWeights[KYLE_PLACES] = { 22, 22, 12, 18, 26 };
-	static const s32 c_styleWeights[CAM_STYLES] = { 50, 25, 25 };
-	static const s32 c_armWeights[ARMS] = { 35, 45, 20 };
-	static const f32 c_kyleLensClear = 2.4f;
+	static const s32 c_moodWeights[MOODS] = { 30, 20, 20, 15, 15 };
+	static const s32 c_placeWeights[KYLE_PLACES] = { 40, 20, 25, 15 };
+	static const s32 c_styleWeights[CAM_STYLES] = { 55, 25, 20 };
+	static const s32 c_armWeights[ARMS] = { 30, 45, 25 };
+	// Nothing but Kyle nearer the lens than this (enemies, shots, blasts)
+	static const f32 c_kyleNear = 6.0f;
+	// The camera tips up or down at most this much (the two renderers tip
+	// differently: the classic one shears, the GPU one turns; this little,
+	// both frame alike)
+	static const f32 c_kylePitchMax = degToRad(12.0f);
+	// (the cutscene art's pixels are shown 1.2 times as tall as wide)
+	static const f32 c_artPixelAspect = 1.2f;
 
 	static s32 s_sfMood = -1, s_sfPlace = -1, s_sfStyle = -1, s_sfArm = -1, s_sfShot = 0;
 	static SecObject* s_sfBomber = nullptr;
@@ -1691,87 +1710,108 @@ namespace TFE_DarkForces
 		return 0;
 	}
 
-	static f32 frameAspect()
+	// The frame's width over its height as it is shown
+	static f32 displayAspect()
 	{
+		if (TFE_Settings::getGraphicsSettings()->rendererIndex != 0)
+		{
+			DisplayInfo info;
+			TFE_RenderBackend::getDisplayInfo(&info);
+			if (info.width && info.height) { return f32(info.width) / f32(info.height); }
+		}
 		u32 w = 0, h = 0;
 		vfb_getResolution(&w, &h);
-		return (w && h) ? f32(w) / f32(h) : 2.0f;
+		if (!w || !h) { return 2.0f; }
+		// (the classic renderer's 200 and 400 line frames have tall pixels)
+		return f32(w) / f32(h) / ((h == 200 || h == 400) ? c_artPixelAspect : 1.0f);
 	}
 
-	// Which picture of Kyle, where and how big
+	// Which picture of Kyle and where. He faces the camera (the arms-crossed
+	// bust); its straight edges, where the drawing cuts through him, are
+	// always past the frame's edges: the bottom below it, the side his body
+	// runs off past the left or right edge, the other side's cut below the
+	// frame's bottom. Only the frame cuts him.
 	static void kylePlan()
 	{
 		KyleShot& shot = s_kyleShot;
 		s_sfPlace = pickWeighted(c_placeWeights, KYLE_PLACES, s_sfPlace);
-		const bool haveBust = !s_kyleBust.rgba.empty(), haveShoulder = !s_kyleShoulder.rgba.empty();
-		const bool shoulder = haveShoulder && (!haveBust || chance(2));
-		const bool leftSide = (s_sfPlace == KYLE_LEFT) || ((s_sfPlace == KYLE_CORNER || s_sfPlace == KYLE_HALF) && chance(2)) ||
-			(s_sfPlace == KYLE_MIDDLE && chance(2));
-		// (looking into the frame, mostly: over the shoulder he looks right
-		// as drawn; the bust looks a little left)
-		bool mirror = shoulder ? !leftSide : leftSide;
-		if (chance(5)) { mirror = !mirror; }
+		const bool mirror = chance(2);
 		s32 talk = -1, eyes = -1;
-		if (!shoulder)
-		{
-			static const s32 talking[] = { 3, 5, 6 };
-			if (randInt(100) < 35) { talk = talking[randInt(3)]; }
-			const s32 e = randInt(100);
-			if (e < 12) { eyes = 5; }		// (a blink)
-			else if (e < 22) { eyes = 1; }	// (a squint)
-		}
-		kyleCompose(shoulder, mirror, talk, eyes, shot);
-		RIGDBG("kyle plan place %d shoulder %d left %d mirror %d talk %d eyes %d\n", s_sfPlace, shoulder ? 1 : 0, leftSide ? 1 : 0, mirror ? 1 : 0, talk, eyes);
-		const f32 aspect = frameAspect();
-		// (as wide, as a part of the frame, as the game's own 4:3-pixel frame
-		// would show him: the GPU renderer's square pixels come to the same)
-		const f32 imgAspect = f32(shot.img.w) / f32(max(shot.img.h, 1));
-		// (his height in the frame; his width as a fraction of the frame's)
-		f32 height = shoulder ? 0.80f + rand01() * 0.30f : 0.55f + rand01() * 0.25f;
-		if (s_sfPlace == KYLE_MIDDLE) { height *= 0.85f; }
-		if (s_sfPlace == KYLE_CORNER) { height *= 0.95f; }
-		shot.height = height;
-		const f32 w = height * imgAspect / aspect;
-		shot.width = w;
-
-		f32 bottom = 1.0f + rand01() * 0.08f;
-		f32 centre = 0.5f;
+		static const s32 talking[] = { 3, 5, 6 };
+		if (randInt(100) < 35) { talk = talking[randInt(3)]; }
+		const s32 e = randInt(100);
+		if (e < 12) { eyes = 5; }		// (a blink)
+		else if (e < 22) { eyes = 1; }	// (a squint)
+		kyleCompose(mirror, talk, eyes, shot);
+		const KyleImage& img = shot.img;
+		const s32 cutL = sideCutRow(img, false), cutR = sideCutRow(img, true);
+		// (the side with the longer cut goes past the frame's edge)
+		const bool anchorLeft = cutL <= cutR;
+		const s32 otherCut = anchorLeft ? cutR : cutL;
+		const f32 aspect = displayAspect();
+		const f32 picAspect = f32(img.w) / (f32(img.h) * c_artPixelAspect);
+		f32 headGap = 0.0f, push = 0.0f, visible = 1.0f;
+		s32 bottomRow = otherCut - 2 - randInt(16);
 		switch (s_sfPlace)
 		{
-			case KYLE_LEFT:   centre = w * 0.5f - rand01() * 0.06f; break;
-			case KYLE_RIGHT:  centre = 1.0f - w * 0.5f + rand01() * 0.06f; break;
-			case KYLE_MIDDLE: centre = 0.5f + (rand01() - 0.5f) * 0.12f; bottom = 1.0f + rand01() * 0.15f; break;
-			case KYLE_CORNER: centre = leftSide ? w * 0.38f : 1.0f - w * 0.38f; bottom = 1.06f + rand01() * 0.10f; break;
-			case KYLE_HALF:
+			case KYLE_SIDE: headGap = 0.12f + rand01() * 0.20f; push = 0.05f + rand01() * 0.25f; break;
+			case KYLE_LOW:  headGap = 0.30f + rand01() * 0.15f; push = rand01() * 0.15f; break;
+			case KYLE_HALF: headGap = 0.05f + rand01() * 0.20f; push = 0.35f + rand01() * 0.2f; break;
+			case KYLE_PEEK:
 			{
-				// (leaning in from the side: about half of him in it)
-				const f32 seen = 0.38f + rand01() * 0.22f;
-				centre = leftSide ? w * (seen - 0.5f) : 1.0f - w * (seen - 0.5f);
+				// (only his head over the frame's bottom, in the middle:
+				// neither side of the picture is cut that high)
+				bottomRow = min(cutL, cutR) - 2;
+				visible = 0.34f + rand01() * 0.12f;
+				headGap = 1.0f - visible;
 			} break;
 		}
-		shot.centreX = centre;
-		shot.bottom = bottom;
-		// (a cut side inside the frame fades out)
-		shot.fadeL = shot.cutL && centre - w * 0.5f > 0.005f;
-		shot.fadeR = shot.cutR && centre + w * 0.5f < 0.995f;
+		bottomRow = clamp(bottomRow, c_kyleCrown + 30, img.h);
+		if (s_sfPlace != KYLE_PEEK) { visible = 1.0f - headGap; }
+		shot.height = visible * f32(img.h) / f32(bottomRow);
+		shot.top = headGap;
+		shot.width = shot.height * picAspect / aspect;
+		if (s_sfPlace == KYLE_PEEK)
+		{
+			const f32 cx = 0.3f + rand01() * 0.4f;
+			shot.left = cx - shot.width * 0.5f;
+		}
+		else
+		{
+			shot.left = anchorLeft ? -push * shot.width : 1.0f - shot.width + push * shot.width;
+		}
 		shot.on = true;
+		RIGDBG("kyle plan place %d mirror %d left %.2f top %.2f w %.2f h %.2f rows %d talk %d eyes %d\n", s_sfPlace, mirror ? 1 : 0,
+			shot.left, shot.top, shot.width, shot.height, bottomRow, talk, eyes);
 	}
 
-	// Whether a point of the view is over Kyle (with a margin)
+	// Whether a point of the frame (0..1 across and down) is on Kyle
+	static bool kyleAt(f32 u, f32 v)
+	{
+		const KyleShot& shot = s_kyleShot;
+		if (!shot.on || shot.width <= 0.0f || shot.height <= 0.0f) { return false; }
+		const s32 x = s32((u - shot.left) / shot.width * f32(shot.img.w)), y = s32((v - shot.top) / shot.height * f32(shot.img.h));
+		if (x < 0 || y < 0 || x >= shot.img.w || y >= shot.img.h) { return false; }
+		return shot.img.rgba[size_t(y) * shot.img.w + x] != 0;
+	}
+
+	// Whether a point of the view is over Kyle (or nearly)
 	static bool overKyle(const View& v, V3 p, f32 margin)
 	{
 		f32 x, y, z;
 		project(v, p, &x, &y, &z);
 		if (z <= 0.15f) { return false; }
-		f32 u0, v0, u1, v1;
-		kyleRectFrac(s_kyleShot, frameAspect(), &u0, &v0, &u1, &v1);
 		const f32 u = (x + 1.0f) * 0.5f, vv = (1.0f - y) * 0.5f;
-		// (his outline is narrower than his rectangle at the top)
-		return u > u0 - margin && u < u1 + margin && vv > v0 + (v1 - v0) * 0.08f - margin && vv < v1 + margin;
+		for (s32 k = 0; k < 5; k++)
+		{
+			static const f32 du[5] = { 0, -1, 1, 0, 0 }, dv[5] = { 0, 0, 0, -1, 1 };
+			if (kyleAt(u + du[k] * margin, vv + dv[k] * margin)) { return true; }
+		}
+		return false;
 	}
 
 	// How far the view reaches (lines across the frame, out to 24 units:
-	// 0 a wall right there .. 1 all open): a room behind Kyle, not a wall
+	// 0 a wall right there .. 1 all open): the room behind Kyle, not a wall
 	static f32 viewDepth(const View& v, RSector* camSec)
 	{
 		static const f32 across[5] = { -0.8f, -0.4f, 0.0f, 0.4f, 0.8f };
@@ -1788,27 +1828,35 @@ namespace TFE_DarkForces
 
 	static f32 kyleScore(const View& v, RSector* camSec)
 	{
-		f32 sc = 2.5f * viewDepth(v, camSec);
+		f32 sc = 4.0f * viewDepth(v, camSec) - c_sfWallCost * wallByCamera(v, camSec);
 		for (s32 i = 1; i < s_peopleCount; i++)
 		{
 			const Person& p = s_people[i];
-			if (!personInFrame(v, p) || inFront(v.pos, p.mid, p.bodyR)) { if (i <= c_sfFacesClear) { sc -= 1.0f; } continue; }
-			if (overKyle(v, p.head, 0.02f)) { sc -= (i <= c_sfFacesClear) ? 2.0f : 0.5f; continue; }
-			if (!faceClear(v.pos, camSec, i)) { if (i <= c_sfFacesClear) { sc -= 1.0f; } continue; }
-			sc += 1.0f / (1.0f + 0.12f * f32(i - 1));
+			const bool nearPlayer = p.dist < 30.0f;
+			f32 x, y, z;
+			project(v, p.head, &x, &y, &z);
+			const bool inFrame = z > 0.15f && fabsf(x) <= c_sfFitX && y <= c_sfFitUp && y >= -c_sfFitDown;
+			if (!inFrame) { if (nearPlayer) { sc -= 2.5f; } continue; }
+			if (len(p.mid - v.pos) < c_kyleNear || inFront(v.pos, p.mid, p.bodyR)) { sc -= 3.0f; continue; }	// (too near: left out)
+			if (overKyle(v, p.head, 0.03f)) { sc -= nearPlayer ? 2.0f : 0.5f; continue; }
+			if (!faceClear(v.pos, camSec, i)) { if (nearPlayer) { sc -= 1.5f; } continue; }
+			// (big enough to make out, not filling the photo)
+			const f32 size = p.height / (z * 2.0f * v.tanY);
+			const f32 readable = (size >= 0.16f) ? (size <= 0.7f ? 1.0f : 0.6f) : maxf(size / 0.16f, 0.2f);
+			sc += 1.4f * readable / (1.0f + 0.08f * f32(i - 1));
 		}
-		sc -= c_sfWallCost * wallByCamera(v, camSec);
 		// (where Kyle really stands about where he is drawn)
 		f32 x, y, z;
 		project(v, s_eye, &x, &y, &z);
 		f32 u0, v0, u1, v1;
-		kyleRectFrac(s_kyleShot, frameAspect(), &u0, &v0, &u1, &v1);
-		if (z > 0.15f) { sc += 0.6f * (1.0f - minf(fabsf((x + 1.0f) * 0.5f - (u0 + u1) * 0.5f), 1.0f)); }
+		kyleRectFrac(s_kyleShot, &u0, &v0, &u1, &v1);
+		if (z > 0.15f) { sc += 0.4f * (1.0f - minf(fabsf((x + 1.0f) * 0.5f - (u0 + u1) * 0.5f), 1.0f)); }
 		return sc;
 	}
 
 	// What the camera looks at: the people about Kyle's own level (not
-	// those on a walkway far above), the nearer counting for more
+	// those on a walkway far above), the nearer counting for more, a little
+	// below their heads
 	static bool kyleAim(V3* at)
 	{
 		V3 v = v3(0, 0, 0);
@@ -1822,13 +1870,19 @@ namespace TFE_DarkForces
 			w += wi;
 		}
 		if (w <= 0.0f) { return false; }
-		// (a little below their heads: faces in the upper part of the photo)
 		*at = v * (1.0f / w) + up(-1.5f);
 		return true;
 	}
 
+	static void finishView(View& v)
+	{
+		v.tanP = tanf(v.pitch);
+		v.fwd = flatDir(v.yaw);
+		v.right = v3(cosf(v.yaw), 0.0f, -sinf(v.yaw));
+	}
+
 	// The camera, as if Kyle holds the phone: an arm (or a stick) out from
-	// his eyes, at eye height, held up high or low looking up
+	// his eyes, at eye height, held up a little or low looking up a little
 	static bool placeKyleCamera()
 	{
 		const V3 eye = s_eye;
@@ -1841,16 +1895,17 @@ namespace TFE_DarkForces
 		f32 tanX, tanY;
 		viewTans(&tanX, &tanY);
 		f32 kx0, ky0, kx1, ky1;
-		kyleRectFrac(s_kyleShot, frameAspect(), &kx0, &ky0, &kx1, &ky1);
+		kyleRectFrac(s_kyleShot, &kx0, &ky0, &kx1, &ky1);
 		const f32 kyleX = clampf((kx0 + kx1) - 1.0f, -0.9f, 0.9f);	// (his middle, -1..1 across)
-		static const f32 arms[ARMS][3] = { { 1.6f, 2.1f, 2.6f }, { 2.8f, 3.4f, 4.0f }, { 5.0f, 6.2f, 7.5f } };
+		static const f32 arms[ARMS][3] = { { 2.0f, 2.6f, 3.2f }, { 3.6f, 4.4f, 5.2f }, { 6.0f, 7.0f, 8.0f } };
 		struct Cand { V3 cam; RSector* sec; f32 yaw, pitch, score; };
 		Cand best = { eye, nullptr, 0, 0, -1e9f };
-		const f32 jitter = 0.8f;
-		for (s32 tryStyle = 0; tryStyle < 2 && !best.sec; tryStyle++)
+		const f32 jitter = 0.6f;
+		// (this photo's style, else at eye height, any length of arm)
+		for (s32 tryStyle = 0; tryStyle < 1 + ARMS && !best.sec; tryStyle++)
 		{
 			const s32 style = tryStyle ? CAM_EYE : s_sfStyle;
-			const s32 arm = tryStyle ? ARM_NEAR : s_sfArm;
+			const s32 arm = tryStyle ? tryStyle - 1 : s_sfArm;
 			for (s32 k = 0; k < c_sfDirs; k++)
 			{
 				const f32 yaw0 = awayYaw + f32(k) * (2.0f * c_pi / f32(c_sfDirs)) * (k & 1 ? -0.5f : 0.5f);
@@ -1858,20 +1913,19 @@ namespace TFE_DarkForces
 				for (s32 d = 0; d < 3; d++)
 				{
 					f32 lift = 0.3f;
-					if (style == CAM_HIGH) { lift = 2.0f + f32(d) * 0.5f; }
-					if (style == CAM_LOW) { lift = -1.4f - f32(d) * 0.3f; }
+					if (style == CAM_HIGH) { lift = 1.3f + f32(d) * 0.3f; }
+					if (style == CAM_LOW) { lift = -1.1f - f32(d) * 0.2f; }
 					const V3 cam = eye + dir * arms[arm][d] + up(lift);
 					RSector* camSec = nullptr;
 					if (!roomAt(eye, s_eyeSector, cam, 0.6f, &camSec)) { continue; }
-					// what it looks at: the people (or, alone, past Kyle into the room)
 					// (alone: whichever way shows the most of the room)
 					V3 groupAt;
-					const bool group = kyleAim(&groupAt);
-					for (s32 t = 0; t < (group ? 3 : 6); t++)
+					const bool hasGroup = kyleAim(&groupAt);
+					for (s32 t = 0; t < (hasGroup ? 3 : 6); t++)
 					{
 						V3 at = groupAt;
-						f32 blend = f32(t) * 0.35f;
-						if (!group)
+						f32 blend = f32(t) * 0.3f;
+						if (!hasGroup)
 						{
 							at = cam + flatDir(headingTo(cam, eye) + f32(t) * (2.0f * c_pi / 6.0f)) * 12.0f + up(lift * 0.3f);
 							blend = 0.0f;
@@ -1881,18 +1935,18 @@ namespace TFE_DarkForces
 						View v;
 						makeView(v, cam, at, 0.0f);
 						v.yaw = yawAt + wrapAngle(yawKyle - yawAt) * blend;
-						if (style == CAM_LOW) { v.pitch = clampf(v.pitch + degToRad(4.0f), -c_pitchMax, degToRad(28.0f)); }
-						if (style == CAM_HIGH) { v.pitch = clampf(v.pitch - degToRad(4.0f), -c_pitchMax, c_pitchMax); }
-						v.tanP = tanf(v.pitch);
-						v.fwd = flatDir(v.yaw);
-						v.right = v3(cosf(v.yaw), 0.0f, -sinf(v.yaw));
+						f32 lo = -c_kylePitchMax, hi = c_kylePitchMax;
+						if (style == CAM_LOW) { lo = degToRad(-4.0f); v.pitch += degToRad(3.0f); }
+						if (style == CAM_HIGH) { hi = degToRad(4.0f); v.pitch -= degToRad(3.0f); }
+						v.pitch = clampf(v.pitch, lo, hi);
+						finishView(v);
 						f32 sc = kyleScore(v, camSec) + rand01() * jitter;
 						for (s32 u = 0; u < s_sfUsedCount; u++)
 						{
 							// (not the same picture as an earlier photo)
-							const f32 near = 1.0f - minf(len(cam - s_sfUsedCams[u]) / 4.0f, 1.0f);
+							const f32 nearBy = 1.0f - minf(len(cam - s_sfUsedCams[u]) / 4.0f, 1.0f);
 							const f32 same = 1.0f - minf(fabsf(wrapAngle(v.yaw - s_sfUsedYaws[u])) / degToRad(40.0f), 1.0f);
-							sc -= 3.0f * near * same + 1.0f * near;
+							sc -= 3.0f * nearBy * same + 1.0f * nearBy;
 						}
 						if (sc > best.score) { best = { cam, camSec, v.yaw, v.pitch, sc }; }
 					}
@@ -1909,8 +1963,7 @@ namespace TFE_DarkForces
 			s_sfUsedYaws[s_sfUsedCount] = best.yaw;
 			s_sfUsedCount++;
 		}
-		const f32 tilt = chance(4) ? (rand01() - 0.5f) * degToRad(8.0f) : 0.0f;
-		pc_place(best.cam, best.yaw, clampf(best.pitch + tilt, -c_pitchMax, c_pitchMax), best.sec);
+		pc_place(best.cam, best.yaw, best.pitch, best.sec);
 		RIGDBG("kyle cam %.2f %.2f %.2f yaw %.0f pitch %.0f score %.2f style %d arm %d place %d\n", best.cam.x, best.cam.y, best.cam.z,
 			best.yaw * 180.0f / c_pi, best.pitch * 180.0f / c_pi, best.score, s_sfStyle, s_sfArm, s_sfPlace);
 		return true;
@@ -1923,9 +1976,8 @@ namespace TFE_DarkForces
 		v.yaw = s_camYaw;
 		v.pitch = s_camPitch;
 		viewTans(&v.tanX, &v.tanY);
-		v.tanP = tanf(v.pitch);
-		v.fwd = flatDir(v.yaw);
-		v.right = v3(cosf(v.yaw), 0.0f, -sinf(v.yaw));
+		v.gpu = TFE_Settings::getGraphicsSettings()->rendererIndex != 0;
+		finishView(v);
 		return v;
 	}
 
@@ -1940,29 +1992,29 @@ namespace TFE_DarkForces
 		return true;
 	}
 
-	// The photobomber: brought right up beside Kyle's place in the frame,
-	// leaning in (only while drawn, as every pose)
+	// The photobomber: brought up beside Kyle in the frame (no nearer the
+	// lens than he is), leaning in (only while drawn, as every pose)
 	static bool placeBomber(const View& v)
 	{
 		s_sfBomber = nullptr;
 		f32 u0, v0, u1, v1;
-		kyleRectFrac(s_kyleShot, frameAspect(), &u0, &v0, &u1, &v1);
+		kyleRectFrac(s_kyleShot, &u0, &v0, &u1, &v1);
 		const bool kyleLeft = (u0 + u1) < 1.0f;
-		// (the nearest posable one; else none)
+		// (the nearest posable one, left out for being too near or not)
 		s32 who = -1;
 		for (s32 i = 1; i < s_peopleCount && who < 0; i++)
 		{
 			if (objValid(s_people[i].obj) && waxAnimFor(s_people[i].obj, ANIM_IDLE) >= 0) { who = i; }
 		}
 		if (who < 0) { return false; }
-		static const f32 depths[] = { 3.5f, 4.2f, 5.0f, 6.0f };
+		static const f32 depths[] = { 6.5f, 7.5f, 8.5f };
 		for (f32 depth : depths)
 		{
 			for (s32 side = 0; side < 2; side++)
 			{
 				// beside him towards the middle (else the other side)
 				const bool right = (side == 0) ? kyleLeft : !kyleLeft;
-				f32 u = right ? u1 + 0.05f : u0 - 0.05f;
+				f32 u = right ? u1 + 0.07f : u0 - 0.07f;
 				u = clampf(u, 0.12f, 0.88f);
 				const f32 fx = u * 2.0f - 1.0f;
 				const V3 at = v.pos + v.fwd * depth + v.right * (fx * v.tanX * depth);
@@ -1977,6 +2029,7 @@ namespace TFE_DarkForces
 				const s32 kind = chance(2) ? POSE_ATTACK : (chance(2) ? POSE_ANGER : POSE_IDLE);
 				if (!pickPose(p.obj, kind, &anim, &frame)) { continue; }
 				const f32 lean = (rand01() - 0.5f) * degToRad(30.0f);
+				pc_unhide(p.obj);
 				pc_setPose(p.obj, headingTo(feet, v.pos) + lean, anim, frame);
 				pc_movePose(p.obj, feet, sec);
 				p.inFrame = true;
@@ -1988,10 +2041,9 @@ namespace TFE_DarkForces
 		return false;
 	}
 
-	// Everyone in the photo, as this photo's mood has them
+	// Everyone in the photo, as this photo's mood has them, facing the lens
 	static void kylePoseMood(const View& v)
 	{
-		const V3 kyle = fromFixed(s_playerObject->posWS);
 		for (s32 i = 1; i < s_peopleCount; i++)
 		{
 			Person& p = s_people[i];
@@ -2014,15 +2066,13 @@ namespace TFE_DarkForces
 				} break;
 				case MOOD_FIREFIGHT:
 				{
-					// (firing: at Kyle mostly, some at the camera)
-					if (chance(3) == false) { yaw = headingTo(p.pos, kyle); }
-					yaw += (rand01() - 0.5f) * degToRad(10.0f);
+					yaw += (rand01() - 0.5f) * degToRad(16.0f);
 					if (!pickFrame(p.obj, chance(3) ? ANIM_ATTACK2 : ANIM_ATTACK1, true, &anim, &frame) &&
 						!pickFrame(p.obj, ANIM_ATTACK1, true, &anim, &frame)) { anim = -1; }
 				} break;
 				case MOOD_CHAOS:
 				{
-					yaw += (rand01() - 0.5f) * degToRad(120.0f);
+					yaw += (rand01() - 0.5f) * degToRad(50.0f);
 					static const s32 actions[] = { ANIM_ATTACK1, ANIM_PAIN, ANIM_DIE1, ANIM_DIE2, ANIM_MOVE, ANIM_ATTACK2 };
 					const s32 a = actions[randInt(6)];
 					if (!pickFrame(p.obj, a, a == ANIM_ATTACK1 || a == ANIM_ATTACK2, &anim, &frame) &&
@@ -2031,7 +2081,7 @@ namespace TFE_DarkForces
 				default:	// (posing, and everyone but the photobomber)
 				{
 					yaw += (rand01() - 0.5f) * 2.0f * c_sfTurnSmall;
-					if (randInt(100) < c_sfTurnChance)
+					if (randInt(100) < 20)
 					{
 						const f32 turn = c_sfTurnMin + rand01() * (c_sfTurnMax - c_sfTurnMin);
 						yaw += chance(2) ? turn : -turn;
@@ -2043,8 +2093,8 @@ namespace TFE_DarkForces
 		}
 	}
 
-	// Shots and blasts: kept in a firefight (behind Kyle), else left out in
-	// front of faces; none right by the lens, none between him and the lens
+	// Shots and blasts: none nearer the lens than Kyle, nor in front of him;
+	// kept in a firefight (behind him), else left out in front of faces
 	static void kyleHideShots(const View& v)
 	{
 		forEachObject([&](SecObject* obj)
@@ -2054,7 +2104,9 @@ namespace TFE_DarkForces
 			const V3 pos = fromFixed(obj->posWS) + up(fixed16ToFloat(max(obj->worldHeight, 0)) * 0.5f);
 			const V3 dp = pos - v.pos;
 			const f32 fdp = len(dp);
-			if (fdp < c_kyleLensClear + 0.5f || dot(dp, v.fwd) < s_sfArmDist) { pc_hide(obj); return; }
+			if (fdp < c_kyleNear + 1.0f || dot(dp, v.fwd) < s_sfArmDist + 1.0f) { pc_hide(obj); return; }
+			// (none over Kyle)
+			if (overKyle(v, pos, 0.02f)) { pc_hide(obj); return; }
 			if (s_sfMood == MOOD_FIREFIGHT) { return; }
 			for (s32 i = 1; i < s_peopleCount; i++)
 			{
@@ -2090,19 +2142,25 @@ namespace TFE_DarkForces
 		s_sfStyle = pickWeighted(c_styleWeights, CAM_STYLES, s_sfStyle);
 		s_sfArm = pickWeighted(c_armWeights, ARMS, s_sfArm);
 		kylePlan();
+	#ifdef IOS_CAMERA_RIG_DEBUG
+		const u64 t0 = SDL_GetPerformanceCounter();
+	#endif
 		if (!placeKyleCamera()) { return false; }
+		RIGDBG("kyle camera %.1f ms\n", f64(SDL_GetPerformanceCounter() - t0) * 1000.0 / f64(SDL_GetPerformanceFrequency()));
 		const View v = currentView();
-		// enemies between Kyle and the lens, and the dying and dead there, left out
+		// everyone nearer the lens than Kyle, or between him and it, left out
+		// (the dying and the dead too)
 		for (s32 j = 0; j < s_blockerCount; j++)
 		{
-			if (inFront(v.pos, s_blockers[j].mid, s_blockers[j].bodyR)) { pc_hide(s_blockers[j].obj); }
+			if (len(s_blockers[j].mid - v.pos) < c_kyleNear || inFront(v.pos, s_blockers[j].mid, s_blockers[j].bodyR)) { pc_hide(s_blockers[j].obj); }
 		}
 		forEachObject([&](SecObject* obj)
 		{
 			if (obj == s_playerObject || obj->type != OBJ_TYPE_SPRITE || !(obj->flags & OBJ_FLAG_NEEDS_TRANSFORM)) { return; }
 			if (!(obj->entityFlags & (ETFLAG_AI_ACTOR | ETFLAG_CORPSE)) || objKind(obj) == KIND_ENEMY) { return; }
 			const Measure m = measure(obj);
-			if (len(m.mid - v.pos) < 60.0f && inFront(v.pos, m.mid, m.bodyR)) { pc_hide(obj); }
+			const f32 d = len(m.mid - v.pos);
+			if (d < 60.0f && (d < c_kyleNear || inFront(v.pos, m.mid, m.bodyR))) { pc_hide(obj); }
 		});
 		kylePoseMood(v);
 		if (s_sfMood == MOOD_PHOTOBOMB && !placeBomber(v)) { s_sfMood = MOOD_POSING; }
@@ -2121,7 +2179,7 @@ namespace TFE_DarkForces
 		s_sfLiftNow = (r < 20) ? c_sfLiftUp : ((r < 35) ? c_sfLiftDown : c_sfLift);
 		findSolids(c_sfCamMax + 20.0f);
 		s_sfKyle = kyleLoad();
-		s_sfLensClearNow = s_sfKyle ? c_kyleLensClear : c_sfLensClear;
+		s_sfLensClearNow = s_sfKyle ? c_kyleNear : c_sfLensClear;
 		s_kyleShot.on = false;
 		findPeople();
 		if (s_sfKyle)
@@ -2726,6 +2784,12 @@ namespace TFE_DarkForces
 		}
 		if (iosCamera_photoView() && s_camSector)
 		{
+			// (no crosshair over the photos)
+			if (reticle_enabled())
+			{
+				reticle_enable(false);
+				s_reticleWasOn = true;
+			}
 			pc_draw(display, colormap, lightSourceRamp);
 			return true;
 		}
