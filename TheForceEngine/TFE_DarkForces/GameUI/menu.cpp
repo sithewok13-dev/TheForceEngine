@@ -70,6 +70,17 @@ namespace TFE_DarkForces
 			Vec2i pdap = TFE_Input::getPDAPosition();
 			s_cursorPos = pdap;
 		}
+	#ifdef TFE_IOS
+		// iOS: the cursor goes where the finger is (in the display's pixels,
+		// main.cpp), on the 4:3 menu centered at the screen's full height.
+		else if (displayInfo.width >= displayInfo.height)
+		{
+			const s32 menuWidth = (s32)displayInfo.height * 4 / 3;
+			const s32 menuLeft = ((s32)displayInfo.width - menuWidth) / 2;
+			s_cursorPos.x = clamp((mx - menuLeft) * width / menuWidth, 0, width - 3);
+			s_cursorPos.z = clamp(my * height / (s32)displayInfo.height, 0, height - 3);
+		}
+	#endif
 		else
 		{
 			if (displayInfo.width >= displayInfo.height)

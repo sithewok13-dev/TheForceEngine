@@ -634,6 +634,10 @@ namespace TFE_Input
 		s32 mouseAbsX, mouseAbsY;
 		SDL_GetRelativeMouseState(&mouseX, &mouseY);
 		SDL_GetMouseState(&mouseAbsX, &mouseAbsY);
+	#ifdef TFE_IOS
+		// iOS: where the finger is, from the touch events (main.cpp)
+		TFE_Input::getMousePos(&mouseAbsX, &mouseAbsY);
+	#endif
 
 		// Handle Playback
 		if (isDemoPlayback())

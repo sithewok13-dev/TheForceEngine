@@ -152,6 +152,9 @@ namespace TFE_DarkForces
 	///////////////////////////////////////////
 	void agentMenu_update()
 	{
+	#ifdef TFE_IOS
+		TFE_Input::setGameTextInput(s_newAgentDlg != JFALSE);	// the keyboard for the name
+	#endif
 		if (s_newAgentDlg)
 		{
 			updateNewAgentDlg();

@@ -12,6 +12,7 @@
 #endif
 #include "markdown.h"
 #include <SDL.h>
+#include <TFE_Input/input.h>
 
 namespace TFE_Ui
 {
@@ -102,11 +103,12 @@ void setUiInput(const void* inputEvent)
 }
 
 #ifdef TFE_IOS
-// iOS: the on-screen keyboard while an ImGui text field wants typing (SDL
-// only starts text input by itself where there is no on-screen keyboard).
+// iOS: the on-screen keyboard while an ImGui text field or the game's own
+// text box (the new agent's name) wants typing (SDL only starts text input by
+// itself where there is no on-screen keyboard).
 static void updateTextInput()
 {
-	const bool wantText = ImGui::GetIO().WantTextInput;
+	const bool wantText = ImGui::GetIO().WantTextInput || TFE_Input::gameTextInput();
 	if (wantText != (SDL_IsTextInputActive() == SDL_TRUE))
 	{
 		if (wantText) { SDL_StartTextInput(); }

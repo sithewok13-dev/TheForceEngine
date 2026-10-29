@@ -122,12 +122,50 @@ void handleEvent(SDL_Event& Event)
 		} break;
 		case SDL_MOUSEBUTTONDOWN:
 		{
+		#ifdef TFE_IOS
+			if (Event.button.which == SDL_TOUCH_MOUSEID) { break; }	// (the finger, below)
+		#endif
 			TFE_Input::setMouseButtonDown(MouseButton(Event.button.button - SDL_BUTTON_LEFT));
 		} break;
 		case SDL_MOUSEBUTTONUP:
 		{
+		#ifdef TFE_IOS
+			if (Event.button.which == SDL_TOUCH_MOUSEID) { break; }
+		#endif
 			TFE_Input::setMouseButtonUp(MouseButton(Event.button.button - SDL_BUTTON_LEFT));
 		} break;
+	#ifdef TFE_IOS
+		// iOS: the first finger down is the game's mouse (its menus, a tap
+		// skipping cutscenes), from the touch events themselves: the mouse
+		// SDL makes from touches doesn't reach the game reliably.
+		case SDL_FINGERDOWN:
+		case SDL_FINGERMOTION:
+		case SDL_FINGERUP:
+		{
+			static bool s_fingerActive = false;
+			static SDL_FingerID s_fingerId = 0;
+			if (Event.type == SDL_FINGERDOWN && !s_fingerActive)
+			{
+				s_fingerActive = true;
+				s_fingerId = Event.tfinger.fingerId;
+			}
+			if (!s_fingerActive || Event.tfinger.fingerId != s_fingerId) { break; }
+
+			// in the display's pixels, as the game's menus expect
+			DisplayInfo displayInfo;
+			TFE_RenderBackend::getDisplayInfo(&displayInfo);
+			TFE_Input::setMousePos(s32(Event.tfinger.x * displayInfo.width), s32(Event.tfinger.y * displayInfo.height));
+			if (Event.type == SDL_FINGERDOWN)
+			{
+				TFE_Input::setMouseButtonDown(MBUTTON_LEFT);
+			}
+			else if (Event.type == SDL_FINGERUP)
+			{
+				TFE_Input::setMouseButtonUp(MBUTTON_LEFT);
+				s_fingerActive = false;
+			}
+		} break;
+	#endif
 		case SDL_MOUSEWHEEL:
 		{
 			TFE_Input::setMouseWheel(Event.wheel.x, Event.wheel.y);

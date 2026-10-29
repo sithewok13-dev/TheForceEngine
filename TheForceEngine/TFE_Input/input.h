@@ -56,6 +56,9 @@ namespace TFE_Input
 	bool keyModDown(KeyModifier keyMod, bool allowAltOnNone = false);
 	bool mouseDown(MouseButton button);
 	bool mousePressed(MouseButton button);
+	// iOS: the game's own text box wants the on-screen keyboard
+	void setGameTextInput(bool enable);
+	bool gameTextInput();
 	bool relativeModeEnabled();
 	void setRepeating(bool repeat);
 	bool isRepeating();
