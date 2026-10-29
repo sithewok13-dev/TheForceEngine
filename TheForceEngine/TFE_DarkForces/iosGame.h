@@ -38,4 +38,10 @@ namespace TFE_DarkForces
 	// weapon and no HUD are drawn)
 	bool iosCamera_drawWorld(u8* display, RSector* eyeSector, const u8* colormap, const u8* lightSourceRamp);
 	bool iosCamera_photoView();
+	// (CAMERA's frame grabs) a selfie's Kyle, true colour, into a frame read
+	// back (w x h RGBA, the bottom row first)
+	void iosCamera_compositeRGBA(s32 w, s32 h, u8* rgba);
+	// (iosGame_afterHud) the frame has been read for any photo: a selfie's
+	// Kyle onto the software renderer's screen
+	void iosCamera_frameGrabbed();
 }

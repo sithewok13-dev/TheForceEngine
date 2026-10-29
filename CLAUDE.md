@@ -25,9 +25,14 @@ They own both the original Dark Forces and Nightdive's Dark Forces Remaster
   `IOSSelfieShots.c` (from Sam) with grabs of the 8-bit frame
   (`IOS_ReadFrameRGBA`); selfies, Action Freeze and the cinematic burst are
   `TFE_DarkForces/iosCamera.cpp` (a photo view drawn from its own camera
-  through `iosCamera_drawWorld` in `mission.cpp`, no weapon or HUD; the
-  player drawn as HUMAN3.3DO coloured as Kyle; poses and hiding applied only
-  while that view is drawn and put back right after, every frame).
+  through `iosCamera_drawWorld` in `mission.cpp`, no weapon or HUD; poses,
+  hiding and moves applied only while that view is drawn and put back right
+  after, every frame). In selfies Kyle is the cutscene art from the
+  player's own BRIEF2.LFD / AWARD2.LFD, by the lens (true colour into the
+  saved photo via `iosCamera_compositeRGBA`, nearest colours on the software
+  renderer's screen; not on screen with the GPU renderer), with a mood per
+  photo; Action Freeze and the cinematic burst draw the player as
+  HUMAN3.3DO coloured as Kyle.
 - **iOS code:**
   - `ios/`: the app around the engine. `ios_app.cmake` (bundle, Info.plist,
     icon, support files, ANGLE frameworks), `Info.plist.in`, `Assets.xcassets`,

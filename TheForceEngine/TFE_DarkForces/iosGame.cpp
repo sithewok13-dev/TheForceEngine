@@ -515,7 +515,12 @@ namespace TFE_DarkForces
 	}
 
 	void iosGame_afterScene() { if (!gpuFrame()) { IOSCapture_AfterScene(); } }
-	void iosGame_afterHud() { if (!gpuFrame()) { IOSCapture_AfterHud(); } }
+	void iosGame_afterHud()
+	{
+		if (gpuFrame()) { return; }
+		IOSCapture_AfterHud();
+		iosCamera_frameGrabbed();
+	}
 	void iosGame_screenDrawn()
 	{
 		if (!gpuFrame() || s_mode == IOSTOUCH_HIDDEN) { return; }
@@ -538,7 +543,9 @@ extern "C"
 		if (gpuFrame())
 		{
 			if (w != s_screenW || h != s_screenH || !p) { return 0; }
-			return TFE_RenderBackend::readScreenRGBA(w, h, p) ? 1 : 0;
+			if (!TFE_RenderBackend::readScreenRGBA(w, h, p)) { return 0; }
+			iosCamera_compositeRGBA(w, h, p);
+			return 1;
 		}
 		if (!src || !pal || !p || w != (int)fw * k || h != (int)fh * k) { return 0; }
 		const u32 stride = vfb_getStride();
@@ -552,6 +559,7 @@ extern "C"
 				dst[x] = pal[row[x / k]] | 0xff000000u;
 			}
 		}
+		iosCamera_compositeRGBA(w, h, p);
 		return 1;
 	}
 
