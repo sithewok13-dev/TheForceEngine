@@ -30,9 +30,6 @@
 #include <IOSCheat.h>
 #include <IOSCheatGame.h>
 #include <IOSCapture.h>
-#include <IOSSelfie.h>
-#include <IOSFreeze.h>
-#include <IOSCinema.h>
 
 using namespace TFE_Input;
 using namespace TFE_Jedi;
@@ -588,31 +585,5 @@ extern "C"
 	}
 	unsigned int IOSCheatGame_World(void) { return s_world; }
 	unsigned int IOSCheatGame_Catches(void) { return 0; }
-
-	// CAMERA's selfies, Action Freeze and the cinematic burst: not in this
-	// build yet (the overlay says it can't take one here)
-	int IOSSelfie_Begin(void) { return 0; }
-	int IOSSelfie_IsActive(void) { return 0; }
-	int IOSSelfie_IsPosed(void) { return 0; }
-	int IOSSelfie_Failed(void) { return 1; }
-	void IOSSelfie_Repose(void) {}
-	void IOSSelfie_End(void) {}
-	void IOSSelfie_SetMaxPeople(int) {}
-	int IOSSelfie_NumPosed(void) { return 0; }
-
-	int IOSFreeze_Begin(void) { return 0; }
-	int IOSFreeze_Orbit(float, float) { return 0; }
-	void IOSFreeze_Pan(float, float) {}
-	void IOSFreeze_Zoom(float) {}
-	void IOSFreeze_SetSmooth(int) {}
-	void IOSFreeze_Frame(void) {}
-	void IOSFreeze_End(void) {}
-	int IOSFreeze_IsActive(void) { return 0; }
-
-	int IOSCinema_Start(double) { return IOSCINEMA_CANT; }
-	int IOSCinema_Tick(double) { return IOSCINEMA_IDLE; }
-	void IOSCinema_Stop(void) {}
-	int IOSCinema_IsActive(void) { return 0; }
-	int IOSCinema_NumTaken(void) { return 0; }
 }
 #endif

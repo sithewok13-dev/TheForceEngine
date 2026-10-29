@@ -620,14 +620,22 @@ namespace TFE_DarkForces
 				#ifdef TFE_IOS
 					iosGame_frameBegin();	// (CAMERA's photos)
 				#endif
+				#ifdef TFE_IOS
+					// (CAMERA's photo view: from a camera of its own, no weapon)
+					if (s_playerEye && !iosCamera_drawWorld(s_framebuffer, s_playerEye->sector, s_levelColorMap, s_lightSourceRamp))
+					{
+						weapon_draw(s_framebuffer, (DrawRect*)vfb_getScreenRect(VFB_RECT_UI));
+					}
+				#else
 					if (s_playerEye)
 					{
 						drawWorld(s_framebuffer, s_playerEye->sector, s_levelColorMap, s_lightSourceRamp);
 					}
 					weapon_draw(s_framebuffer, (DrawRect*)vfb_getScreenRect(VFB_RECT_UI));
+				#endif
 					handleVisionFx();
 				#ifdef TFE_IOS
-					iosGame_afterScene();
+					if (!iosCamera_photoView()) { iosGame_afterScene(); }
 				#endif
 				}
 			}
@@ -654,12 +662,30 @@ namespace TFE_DarkForces
 			if (!escapeMenu_isOpen() && !pda_isOpen() && !cutscene_isPlaying())
 			{
 				handleGeneralInput();
-				if (s_drawAutomap)
+			#ifdef TFE_IOS
+				// (CAMERA's photo view: no map, no HUD)
+				if (!iosCamera_photoView())
+			#endif
 				{
-					automap_draw(s_framebuffer);
+					if (s_drawAutomap)
+					{
+						automap_draw(s_framebuffer);
+					}
+					hud_drawAndUpdate(s_framebuffer);
+					hud_drawMessage(s_framebuffer);
 				}
-				hud_drawAndUpdate(s_framebuffer);
-				hud_drawMessage(s_framebuffer);
+			#ifdef TFE_IOS
+				if (iosCamera_photoView())
+				{
+					// (no hit or pickup flash held over the photos while the
+					// game holds still; night vision and brightness stay)
+					const s32 fx[3] = { s_healthFxLevel, s_shieldFxLevel, s_flashFxLevel };
+					s_healthFxLevel = s_shieldFxLevel = s_flashFxLevel = 0;
+					handlePaletteFx();
+					s_healthFxLevel = fx[0]; s_shieldFxLevel = fx[1]; s_flashFxLevel = fx[2];
+				}
+				else
+			#endif
 				handlePaletteFx();
 			#ifdef TFE_IOS
 				iosGame_afterHud();

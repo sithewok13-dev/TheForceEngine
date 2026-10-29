@@ -24,7 +24,10 @@ They own both the original Dark Forces and Nightdive's Dark Forces Remaster
   level warps; Kyle's lines). CAMERA: `ios/IOSCapture.c`, `IOSPhotos.m`,
   `IOSSelfieShots.c` (from Sam) with grabs of the 8-bit frame
   (`IOS_ReadFrameRGBA`); selfies, Action Freeze and the cinematic burst are
-  stubs in `iosGame.cpp` for now.
+  `TFE_DarkForces/iosCamera.cpp` (a photo view drawn from its own camera
+  through `iosCamera_drawWorld` in `mission.cpp`, no weapon or HUD; the
+  player drawn as HUMAN3.3DO coloured as Kyle; poses and hiding applied only
+  while that view is drawn and put back right after, every frame).
 - **iOS code:**
   - `ios/`: the app around the engine. `ios_app.cmake` (bundle, Info.plist,
     icon, support files, ANGLE frameworks), `Info.plist.in`, `Assets.xcassets`,

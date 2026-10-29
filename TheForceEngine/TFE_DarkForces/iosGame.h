@@ -7,6 +7,8 @@
 //////////////////////////////////////////////////////////////////////
 #include <TFE_System/types.h>
 
+struct RSector;
+
 namespace TFE_DarkForces
 {
 	// Once a frame, after SDL's events (the overlay's touches come in with
@@ -27,4 +29,11 @@ namespace TFE_DarkForces
 	void iosGame_frameBegin();
 	void iosGame_afterScene();
 	void iosGame_afterHud();
+
+	// (the mission's frame, iosCamera.cpp) Draws the 3D view: from the
+	// player's eyes, or from CAMERA's photo view while a selfie, Action
+	// Freeze or the cinematic burst has it (true: then no first-person
+	// weapon and no HUD are drawn)
+	bool iosCamera_drawWorld(u8* display, RSector* eyeSector, const u8* colormap, const u8* lightSourceRamp);
+	bool iosCamera_photoView();
 }
