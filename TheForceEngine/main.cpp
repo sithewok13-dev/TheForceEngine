@@ -123,6 +123,7 @@ void handleEvent(SDL_Event& Event)
 		case SDL_MOUSEBUTTONDOWN:
 		{
 		#ifdef TFE_IOS
+			TFE_Input::touchTestCount(Event.button.which == SDL_TOUCH_MOUSEID ? 1 : 2);
 			if (Event.button.which == SDL_TOUCH_MOUSEID) { break; }	// (the finger, below)
 		#endif
 			TFE_Input::setMouseButtonDown(MouseButton(Event.button.button - SDL_BUTTON_LEFT));
@@ -144,6 +145,7 @@ void handleEvent(SDL_Event& Event)
 		{
 			static bool s_fingerActive = false;
 			static SDL_FingerID s_fingerId = 0;
+			if (Event.type == SDL_FINGERDOWN) { TFE_Input::touchTestCount(0); }
 			if (Event.type == SDL_FINGERDOWN && !s_fingerActive)
 			{
 				s_fingerActive = true;

@@ -581,7 +581,12 @@ namespace TFE_DarkForces
 				s_runGameState.cutscenesEnabled = JFALSE;
 			}
 
+		#ifdef TFE_IOS
+			// iOS: straight to the Agent menu, without the opening logos and crawl
+			if (false)
+		#else
 			if (s_runGameState.cutscenesEnabled && !s_runGameState.startLevel)
+		#endif
 			{
 				cutscene_play(10);
 			}

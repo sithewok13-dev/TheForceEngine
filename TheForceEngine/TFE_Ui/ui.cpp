@@ -173,6 +173,19 @@ void begin()
 
 void render()
 {
+#ifdef TFE_IOS
+	// iOS touch test (temporary): where taps get to, for a screenshot
+	{
+		const s32* c = TFE_Input::touchTestCounts();
+		char text[128];
+		snprintf(text, sizeof(text), "touch test  finger %d  touch-mouse %d  mouse %d  game %d", c[0], c[1], c[2], c[3]);
+		ImDrawList* drawList = ImGui::GetForegroundDrawList();
+		const ImVec2 size = ImGui::CalcTextSize(text);
+		const ImVec2 pos(ImGui::GetIO().DisplaySize.x * 0.5f - size.x * 0.5f, 8.0f);
+		drawList->AddRectFilled(ImVec2(pos.x - 6.0f, pos.y - 3.0f), ImVec2(pos.x + size.x + 6.0f, pos.y + size.y + 3.0f), IM_COL32(0, 0, 0, 200));
+		drawList->AddText(pos, IM_COL32(255, 255, 0, 255), text);
+	}
+#endif
 	ImGui::Render();
 	ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 	s_guiFrameActive = false;
