@@ -1,4 +1,7 @@
 #include "mission.h"
+#ifdef TFE_IOS
+#include "iosGame.h"
+#endif
 #include "agent.h"
 #include "animLogic.h"
 #include "automap.h"
@@ -614,12 +617,18 @@ namespace TFE_DarkForces
 
 					// Dark Forces Draw.
 					updateScreensize();
+				#ifdef TFE_IOS
+					iosGame_frameBegin();	// (CAMERA's photos)
+				#endif
 					if (s_playerEye)
 					{
 						drawWorld(s_framebuffer, s_playerEye->sector, s_levelColorMap, s_lightSourceRamp);
 					}
 					weapon_draw(s_framebuffer, (DrawRect*)vfb_getScreenRect(VFB_RECT_UI));
 					handleVisionFx();
+				#ifdef TFE_IOS
+					iosGame_afterScene();
+				#endif
 				}
 			}
 			else if (cutscene_isPlaying())
@@ -652,6 +661,9 @@ namespace TFE_DarkForces
 				hud_drawAndUpdate(s_framebuffer);
 				hud_drawMessage(s_framebuffer);
 				handlePaletteFx();
+			#ifdef TFE_IOS
+				iosGame_afterHud();
+			#endif
 			}
 			else
 			{
@@ -1355,6 +1367,14 @@ namespace TFE_DarkForces
 			}
 		}
 	}
+
+#ifdef TFE_IOS
+	// iOS: the touch controls' cheat (iosGame.cpp) runs the game's own cheats
+	void mission_iosQueueCheat(s32 cheatId)
+	{
+		s_queuedCheatID = CheatID(cheatId);
+	}
+#endif
 
 	void mission_pause(JBool pause)
 	{

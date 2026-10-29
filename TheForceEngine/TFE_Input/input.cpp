@@ -1,7 +1,4 @@
 #include <TFE_Input/input.h>
-#ifdef TFE_IOS
-#include <TFE_Input/touchControls.h>
-#endif
 #include <TFE_FileSystem/filestream.h>
 #include <TFE_System/system.h>
 #include <TFE_System/parser.h>
@@ -59,9 +56,6 @@ namespace TFE_Input
 	////////////////////////////////////////////////////////
 	void endFrame()
 	{
-	#ifdef TFE_IOS
-		TFE_TouchControls::endFrame();
-	#endif
 		s_mouseWheel[0] = 0;
 		s_mouseWheel[1] = 0;
 		memset(s_buttonPressed, 0, CONTROLLER_BUTTON_COUNT);

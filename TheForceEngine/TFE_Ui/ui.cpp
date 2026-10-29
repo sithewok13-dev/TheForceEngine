@@ -13,7 +13,6 @@
 #include "markdown.h"
 #include <SDL.h>
 #include <TFE_Input/input.h>
-#include <TFE_Input/touchControls.h>
 
 namespace TFE_Ui
 {
@@ -174,10 +173,6 @@ void begin()
 
 void render()
 {
-#ifdef TFE_IOS
-	// iOS: the touch controls, over the game
-	TFE_TouchControls::draw(ImGui::GetForegroundDrawList(), ImGui::GetIO().DisplaySize.x, ImGui::GetIO().DisplaySize.y);
-#endif
 	ImGui::Render();
 	ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 	s_guiFrameActive = false;

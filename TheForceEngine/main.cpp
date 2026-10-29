@@ -46,9 +46,7 @@
 
 #ifdef TFE_IOS
 #include <iosApp.h>
-#include <TFE_Input/touchControls.h>
-#include <TFE_DarkForces/GameUI/escapeMenu.h>
-#include <TFE_DarkForces/GameUI/pda.h>
+#include <TFE_DarkForces/iosGame.h>
 #endif
 
 #ifdef _WIN32
@@ -103,6 +101,13 @@ void handleEvent(SDL_Event& Event)
 			TFE_System::logWrite(LOG_MSG, "Main", "App Quit");
 			s_loop = false;
 		} break;
+	#ifdef TFE_IOS
+		case SDL_APP_WILLENTERBACKGROUND:
+		{
+			// the touch controls hide (and let go of the game) until it's back
+			TFE_DarkForces::iosGame_hide();
+		} break;
+	#endif
 		case SDL_WINDOWEVENT:
 		{
 			if (Event.window.event == SDL_WINDOWEVENT_RESIZED || Event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED)
@@ -145,9 +150,6 @@ void handleEvent(SDL_Event& Event)
 		case SDL_FINGERMOTION:
 		case SDL_FINGERUP:
 		{
-			// the touch controls first, while a mission is being played
-			if (TFE_TouchControls::handleFinger(&Event)) { break; }
-
 			static bool s_fingerActive = false;
 			static SDL_FingerID s_fingerId = 0;
 			if (Event.type == SDL_FINGERDOWN && !s_fingerActive)
@@ -765,12 +767,10 @@ int main(int argc, char* argv[])
 			continue;
 		}
 	#ifdef TFE_IOS
-		// iOS: the touch controls are up while a mission is being played (not
-		// in its menus), and add their stick, buttons and actions
-		TFE_TouchControls::setActive(s_curState == APP_STATE_GAME && s_curGame && s_curGame->canSave() &&
-			!TFE_DarkForces::escapeMenu_isOpen() && !TFE_DarkForces::pda_isOpen() && !TFE_FrontEndUI::isConsoleOpen() &&
-			!TFE_FrontEndUI::isConfigMenuOpen());
-		TFE_TouchControls::apply();
+		// iOS: the touch controls (the overlay over SDL's view) show while a
+		// mission is being played, and add their stick, buttons and requests
+		// to this frame's input
+		TFE_DarkForces::iosGame_frame(s_curState == APP_STATE_GAME && s_curGame && s_curGame->canSave(), frame);
 	#endif
 
 		// Can we save?

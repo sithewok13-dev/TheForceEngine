@@ -11,12 +11,17 @@ if(NOT ANGLE_ROOT)
 	message(FATAL_ERROR "iOS needs ANGLE: pass -DANGLE_ROOT=<dir with include/ and out/ios/lib*.framework>")
 endif()
 
-# The app's own code: the first-launch screen and paths (Objective-C, ARC),
-# and the ANGLE context in place of SDL's OpenGL (C++)
+# The app's own code: the first-launch screen and paths, the touch controls
+# (the Serious Sam port's overlay) and CAMERA's photos (Objective-C, ARC);
+# CAMERA's frame grabs and selfies' photos (C); and the ANGLE context in
+# place of SDL's OpenGL (C++)
 set(IOS_APP_OBJC_SOURCES
 	"${IOS_APP_DIR}/IOSGameData.m"
+	"${IOS_APP_DIR}/IOSTouch.m"
+	"${IOS_APP_DIR}/IOSPhotos.m"
 )
-target_sources(tfe PRIVATE ${IOS_APP_OBJC_SOURCES} "${IOS_APP_DIR}/iosAngle.cpp")
+target_sources(tfe PRIVATE ${IOS_APP_OBJC_SOURCES} "${IOS_APP_DIR}/iosAngle.cpp"
+	"${IOS_APP_DIR}/IOSCapture.c" "${IOS_APP_DIR}/IOSSelfieShots.c")
 set_source_files_properties(${IOS_APP_OBJC_SOURCES} PROPERTIES COMPILE_FLAGS "-fobjc-arc")
 target_include_directories(tfe PRIVATE "${IOS_APP_DIR}" "${ANGLE_ROOT}/include")
 
@@ -33,7 +38,7 @@ target_link_libraries(tfe PRIVATE
 	"-framework AVFoundation" "-framework AudioToolbox" "-framework CoreAudio"
 	"-framework CoreBluetooth" "-framework CoreGraphics" "-framework CoreHaptics"
 	"-framework CoreMotion" "-framework Foundation" "-framework GameController"
-	"-framework Metal" "-framework QuartzCore"
+	"-framework ImageIO" "-framework Metal" "-framework Photos" "-framework QuartzCore"
 	"-framework UIKit" "-framework UniformTypeIdentifiers"
 )
 

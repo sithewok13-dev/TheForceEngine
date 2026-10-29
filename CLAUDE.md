@@ -10,14 +10,21 @@ They own both the original Dark Forces and Nightdive's Dark Forces Remaster
 - **Stage 1 (done):** the app starts, finds the player's files, plays in TFE's
   software renderer at full screen with sound and music, menus by touch (SDL's
   touch-as-mouse, drag-to-scroll in ImGui windows). **Stage 2 (in progress):**
-  touch game controls, following the standard below. Done: the finger is the
-  game's mouse (main.cpp, display pixels; menus map it onto their 4:3 screen),
-  a tap skips cutscenes, the game starts at the Agent menu (no intro), the
-  agent name box brings up the keyboard, and `TFE_Input/touchControls.cpp`
-  (stick, look drag, FIRE/ALT/JUMP/CROUCH/USE, MENU, QUICK SAVE/LOAD hold,
-  MAP, NEXT WPN tap; drawn with ImGui, up while a mission plays with no menu
-  open). Not yet: the MENU tray (SENS, GYRO, FPS, keyboard), weapon wheel,
-  haptics, the real safe area (fixed insets now).
+  touch game controls, following the standard below. The finger is the
+  game's mouse in its menus (main.cpp, display pixels; the Agent menu and
+  briefing map it onto their 4:3 screen), a tap skips cutscenes, the game
+  starts at the Agent menu (no intro), the agent name box brings up the
+  keyboard. While a mission is played, the controls are the Serious Sam
+  port's overlay, copied: `ios/IOSTouch.m` / `.h` (C core + UIKit view), with
+  Dark Forces' buttons (ALT in ZOOM's place, MAP top left) and weapon wheel;
+  `TFE_DarkForces/iosGame.cpp` is the game side (mode, weapons, holding the
+  game still, actions after the input mapping, look and tilt aiming into the
+  mouse motion, HUD offsets from the overlay's HUD frame, the sithewok cheat
+  on TFE's own cheats: god mode, LAMAXOUT, ammo kept full, fly, noclip,
+  level warps; Kyle's lines). CAMERA: `ios/IOSCapture.c`, `IOSPhotos.m`,
+  `IOSSelfieShots.c` (from Sam) with grabs of the 8-bit frame
+  (`IOS_ReadFrameRGBA`); selfies, Action Freeze and the cinematic burst are
+  stubs in `iosGame.cpp` for now.
 - **iOS code:**
   - `ios/`: the app around the engine. `ios_app.cmake` (bundle, Info.plist,
     icon, support files, ANGLE frameworks), `Info.plist.in`, `Assets.xcassets`,
