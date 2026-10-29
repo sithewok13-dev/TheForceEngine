@@ -318,9 +318,12 @@ namespace TFE_Settings
 
 			parseIniFile(s_iniBuffer.data(), len);
 		#ifdef TFE_GLES
-			// Only the software renderer on OpenGL ES 3.0 (iOS).
-			s_graphicsSettings.rendererIndex = 0;
-			if (s_graphicsSettings.colorMode == COLORMODE_TRUE_COLOR) { s_graphicsSettings.colorMode = COLORMODE_8BIT_INTERP; }
+			// True color is the GPU renderer's (OpenGL ES 3.0, iOS); main.cpp
+			// switches to the software renderer if the GPU can't run it.
+			if (s_graphicsSettings.rendererIndex == 0 && s_graphicsSettings.colorMode == COLORMODE_TRUE_COLOR)
+			{
+				s_graphicsSettings.colorMode = COLORMODE_8BIT_INTERP;
+			}
 		#endif
 		#ifdef TFE_IOS
 			s_windowSettings.fullscreen = true;

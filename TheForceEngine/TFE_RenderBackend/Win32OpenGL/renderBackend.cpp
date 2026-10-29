@@ -805,6 +805,13 @@ namespace TFE_RenderBackend
 		return s_asyncFrameBuffer;
 	}
 
+	// Whether the GPU renderer can run here (on OpenGL ES 3.0 it needs the
+	// clip distance extension; see openGL_Caps.cpp).
+	bool gpuRendererSupported()
+	{
+		return OpenGL_Caps::deviceSupportsGpuRenderer();
+	}
+
 	bool getGPUColorConvert()
 	{
 		return s_gpuColorConvert;

@@ -131,6 +131,7 @@ namespace TFE_RenderBackend
 	bool getWidescreen();
 	bool getFrameBufferAsync();
 	bool getGPUColorConvert();
+	bool gpuRendererSupported();
 	void* getVirtualDisplayGpuPtr();
 
 	u32 getVirtualDisplayWidth2D();

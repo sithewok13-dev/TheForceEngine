@@ -679,6 +679,19 @@ int main(int argc, char* argv[])
 		TFE_System::logClose();
 		return PROGRAM_ERROR;
 	}
+#ifdef TFE_GLES
+	// OpenGL ES 3.0 (iOS): the GPU renderer needs clip distances there; use the
+	// software renderer, and its 8-bit color, where they're missing.
+	if (!TFE_RenderBackend::gpuRendererSupported() && TFE_Settings::getGraphicsSettings()->rendererIndex != 0)
+	{
+		TFE_System::logWrite(LOG_WARNING, "GPU", "The GPU renderer is not supported here, using the software renderer.");
+		TFE_Settings::getGraphicsSettings()->rendererIndex = 0;
+		if (TFE_Settings::getGraphicsSettings()->colorMode == COLORMODE_TRUE_COLOR)
+		{
+			TFE_Settings::getGraphicsSettings()->colorMode = COLORMODE_8BIT_INTERP;
+		}
+	}
+#endif
 	TFE_FrontEndUI::initConsole();
 	TFE_Audio::init(s_nullAudioDevice, TFE_Settings::getSoundSettings()->audioDevice);
 	TFE_MidiPlayer::init(TFE_Settings::getSoundSettings()->midiOutput, (MidiDeviceType)TFE_Settings::getSoundSettings()->midiType);

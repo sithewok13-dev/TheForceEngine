@@ -39,8 +39,14 @@ They own both the original Dark Forces and Nightdive's Dark Forces Remaster
   - Paths on iOS: game files anywhere in Documents (the folder with DARK.GOB, up
     to two levels down); settings, saves, screenshots and the log in
     `Documents/TheForceEngine/`; temp files in Application Support.
-  - The GPU renderer is not available (needs texture buffers, not in ES 3.0); the
-    software renderer only. HD (OGV) cutscenes, system MIDI and the editor are off.
+  - The GPU renderer (and with it true color and the Remaster's HD textures,
+    sprites and HUD) runs on ES 3.0: its texture buffers are 2D textures there
+    (`shaderBuffer.cpp`, read by `tfeBufferFetch()` from `shader.cpp`'s GLES
+    header), its clip distances come from GL_ANGLE_clip_cull_distance (ANGLE on
+    Metal) or GL_EXT_clip_cull_distance (Mesa), and `noperspective` is emulated
+    (`TFE_GLES` in the model shader). Without the clip extension it falls back to
+    the software renderer, which stays the iOS default. HD (OGV) cutscenes,
+    system MIDI and the editor are off.
 - **CI:** `.github/workflows/ios.yml` (macOS): ANGLE built once and cached
   (`ANGLE_REV`, same revision as the DOOM 3 and Jedi Knight ports), deps cached,
   artifacts `DarkForces-iOS-unsigned.ipa` and `build-log`; fails if game data is

@@ -3223,10 +3223,22 @@ namespace TFE_FrontEndUI
 		ImGui::LabelText("##ConfigLabel", "Renderer:"); ImGui::SameLine(75 * s_uiScale);
 		ImGui::SetNextItemWidth(196 * s_uiScale);
 	#ifdef TFE_GLES
-		// Only the software renderer on OpenGL ES 3.0 (iOS): the GPU renderer
-		// needs texture buffers.
-		graphics->rendererIndex = 0;
-		ImGui::Combo("##Renderer", &graphics->rendererIndex, c_renderer, 1);
+		// OpenGL ES 3.0 (iOS): the GPU renderer only where it can run (it
+		// needs clip distances, an extension there).
+		if (!TFE_RenderBackend::gpuRendererSupported())
+		{
+			graphics->rendererIndex = 0;
+			ImGui::Combo("##Renderer", &graphics->rendererIndex, c_renderer, 1);
+		}
+		else
+		{
+			ImGui::Combo("##Renderer", &graphics->rendererIndex, c_renderer, IM_ARRAYSIZE(c_renderer));
+		}
+		// True color is only on the GPU renderer.
+		if (graphics->rendererIndex == 0 && graphics->colorMode == COLORMODE_TRUE_COLOR)
+		{
+			graphics->colorMode = COLORMODE_8BIT_INTERP;
+		}
 	#else
 		ImGui::Combo("##Renderer", &graphics->rendererIndex, c_renderer, IM_ARRAYSIZE(c_renderer));
 	#endif
@@ -4231,10 +4243,13 @@ namespace TFE_FrontEndUI
 		}
 
 	#ifdef TFE_GLES
-		// The software renderer only on OpenGL ES 3.0 (iOS), and its 8-bit
-		// color modes.
-		graphicsSettings->rendererIndex = RENDERER_SOFTWARE;
-		if (graphicsSettings->colorMode == COLORMODE_TRUE_COLOR)
+		// OpenGL ES 3.0 (iOS): the software renderer, and its 8-bit color
+		// modes, where the GPU renderer can't run.
+		if (!TFE_RenderBackend::gpuRendererSupported())
+		{
+			graphicsSettings->rendererIndex = RENDERER_SOFTWARE;
+		}
+		if (graphicsSettings->rendererIndex == RENDERER_SOFTWARE && graphicsSettings->colorMode == COLORMODE_TRUE_COLOR)
 		{
 			graphicsSettings->colorMode = COLORMODE_8BIT_INTERP;
 		}

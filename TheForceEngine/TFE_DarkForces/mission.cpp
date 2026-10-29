@@ -538,7 +538,7 @@ namespace TFE_DarkForces
 	void mission_render(s32 rendererIndex, bool forceTextureUpdate)
 	{
 	#ifdef TFE_GLES
-		rendererIndex = 0;	// only the software renderer on OpenGL ES 3.0 (iOS)
+		if (!TFE_RenderBackend::gpuRendererSupported()) { rendererIndex = 0; }	// OpenGL ES 3.0 without clip distances
 	#endif
 		if (task_getCount() > 1 && s_missionMode == MISSION_MODE_MAIN)
 		{
