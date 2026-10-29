@@ -2,6 +2,7 @@
 #include <TFE_System/system.h>
 #include <TFE_RenderBackend/renderBackend.h>
 #include "gl.h"
+#include "openGL_Caps.h"
 #include <vector>
 
 namespace TFE_RenderState
@@ -217,9 +218,9 @@ namespace TFE_RenderState
 	void enableClipPlanes(s32 count)
 	{
 	#ifdef TFE_GLES
-		// No clip distances in OpenGL ES 3.0; only the GPU renderer uses them,
-		// and it isn't offered there.
-		return;
+		// Clip distances are an extension in OpenGL ES 3.0 (the GPU renderer,
+		// the only user, isn't offered without it).
+		if (!OpenGL_Caps::deviceSupportsClipDistances()) { return; }
 	#endif
 		if (s_clipPlaneCount != count)
 		{

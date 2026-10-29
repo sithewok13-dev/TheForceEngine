@@ -6,6 +6,9 @@
 #ifdef TFE_IOS
 #include <iosAngle.h>
 #endif
+#ifdef TFE_GLES
+#include <TFE_RenderBackend/shaderBuffer.h>
+#endif
 
 enum CapabilityFlags
 {
@@ -27,6 +30,7 @@ namespace OpenGL_Caps
 	static u32 m_deviceTier = 0;
 	static s32 m_textureBufferMaxSize = 0;
 	static f32 m_maxAnisotropy = 1.0f;
+	static bool m_clipDistances = true;
 
 	enum SpecMinimum
 	{
@@ -45,8 +49,13 @@ namespace OpenGL_Caps
 #ifdef TFE_GLES
 		// OpenGL ES 3.0 (iOS, ANGLE on Metal): everything the software
 		// renderer and its GPU blit / color conversion use is core in ES 3.0.
-		// There are no texture buffers (samplerBuffer), which the GPU renderer
-		// needs, so it is not offered (deviceSupportsGpuRenderer()).
+		// The GPU renderer also needs:
+		//  * texture buffers, which ES 3.0 lacks: ShaderBuffer uses 2D textures
+		//    instead (shaderBuffer.cpp), so the limit is the 2D texture size;
+		//  * 8 clip distances (portal clipping): GL_ANGLE_clip_cull_distance
+		//    (ANGLE on Metal) or GL_EXT_clip_cull_distance (Mesa and others).
+		// Without the clip distances it is not offered.
+		m_clipDistances = false;
 		if (gl_maj >= 3)
 		{
 			m_supportFlags = CAP_PBO | CAP_VBO | CAP_FBO | CAP_UBO | CAP_NON_POW_2 | CAP_TEXTURE_ARRAY;
@@ -59,7 +68,14 @@ namespace OpenGL_Caps
 			{
 				m_maxAnisotropy = 0.0f;
 			}
-			m_textureBufferMaxSize = 0;
+			GLint maxTextureSize = 0, maxClipDistances = 0;
+			glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxTextureSize);
+			m_textureBufferMaxSize = std::min(maxTextureSize, 16384) * SHADER_BUFFER_TEX_WIDTH;
+			if (SDL_GL_ExtensionSupported("GL_ANGLE_clip_cull_distance") || SDL_GL_ExtensionSupported("GL_EXT_clip_cull_distance"))
+			{
+				glGetIntegerv(GL_MAX_CLIP_DISTANCES, &maxClipDistances);
+				m_clipDistances = maxClipDistances >= 8;
+			}
 			m_deviceTier = DEV_TIER_2;
 		}
 		(void)glGetError();
@@ -179,9 +195,15 @@ namespace OpenGL_Caps
 	bool deviceSupportsGpuRenderer()
 	{
 	#ifdef TFE_GLES
-		return false;	// needs texture buffers, which OpenGL ES 3.0 lacks
+		// Texture buffers are 2D textures there; it needs the clip distances.
+		return m_deviceTier > DEV_TIER_1 && m_clipDistances && m_textureBufferMaxSize >= GLSPEC_MAX_TEXTURE_BUFFER_SIZE_MIN;
 	#endif
 		return m_deviceTier > DEV_TIER_1;
+	}
+
+	bool deviceSupportsClipDistances()
+	{
+		return m_clipDistances;
 	}
 
 	s32 getMaxTextureBufferSize()

@@ -11,6 +11,40 @@
 #include <string>
 #include <SDL.h> 
 
+#ifdef TFE_GLES
+#include <TFE_RenderBackend/shaderBuffer.h>
+#include <regex>
+#define TFE_STRINGIFY_(x) #x
+#define TFE_STRINGIFY(x) TFE_STRINGIFY_(x)
+
+// The desktop shaders, made into GLSL ES 3.00.
+static std::string glesShaderSource(const char* glsl)
+{
+	std::string src = glsl;
+	// GLSL ES only allows ASCII, even in comments (blit.frag has a dash from
+	// a Windows code page): blank anything else out.
+	for (char& c : src) { if ((unsigned char)c > 127) { c = ' '; } }
+	if (src.find("samplerBuffer") == std::string::npos) { return src; }
+
+	// Texture buffers are 2D textures (ShaderBuffer): "uniform samplerBuffer X"
+	// becomes "uniform sampler2D X" (isampler2D, usampler2D), and
+	// texelFetch(X, i) becomes tfeBufferFetch(X, i).
+	static const std::regex decl("uniform\\s+([iu]?)samplerBuffer\\s+(\\w+)");
+	std::vector<std::string> names;
+	for (std::sregex_iterator it(src.begin(), src.end(), decl), end; it != end; ++it)
+	{
+		names.push_back((*it)[2].str());
+	}
+	src = std::regex_replace(src, decl, "uniform $1sampler2D $2");
+	for (const std::string& name : names)
+	{
+		const std::regex fetch("texelFetch\\s*\\(\\s*" + name + "\\s*,");
+		src = std::regex_replace(src, fetch, "tfeBufferFetch(" + name + ",");
+	}
+	return src;
+}
+#endif
+
 namespace ShaderGL
 {
 	static const char* c_shaderAttrName[]=
@@ -41,20 +75,30 @@ bool Shader::create(const char* vertexShaderGLSL, const char* fragmentShaderGLSL
 	// OpenGL ES 3.0 (iOS, ANGLE): GLSL ES 3.00 takes the same in/out/texture()
 	// shaders as desktop GLSL 1.30/3.30, plus default precisions. (sampler2D
 	// has a default precision in fragment shaders; the others don't.)
+	// The GPU renderer's clip distances come from an extension (ANGLE's on
+	// Metal, EXT elsewhere; openGL_Caps.cpp checks one is there), and its
+	// texture buffers are 2D textures, read through tfeBufferFetch() (see
+	// ShaderBuffer and glesShaderSource()).
 	version_string =
 		"#version 300 es\n"
+		"#if defined(GL_ANGLE_clip_cull_distance)\n"
+		"#extension GL_ANGLE_clip_cull_distance : enable\n"
+		"#elif defined(GL_EXT_clip_cull_distance)\n"
+		"#extension GL_EXT_clip_cull_distance : enable\n"
+		"#endif\n"
 		"precision highp float;\n"
 		"precision highp int;\n"
 		"precision highp sampler2D;\n"
 		"precision highp sampler2DArray;\n"
 		"precision highp sampler3D;\n"
 		"precision highp usampler2D;\n"
-		"precision highp isampler2D;\n";
-	// GLSL ES only allows ASCII, even in comments (blit.frag has a dash from
-	// a Windows code page): blank anything else out.
-	std::string vertexSource = vertexShaderGLSL, fragmentSource = fragmentShaderGLSL;
-	for (char& c : vertexSource)   { if ((unsigned char)c > 127) { c = ' '; } }
-	for (char& c : fragmentSource) { if ((unsigned char)c > 127) { c = ' '; } }
+		"precision highp isampler2D;\n"
+		"#define TFE_GLES 1\n"
+		"#define TFE_BUFFER_COORD(i) ivec2((i) & " TFE_STRINGIFY(SHADER_BUFFER_TEX_WIDTH) " - 1, (i) >> " TFE_STRINGIFY(SHADER_BUFFER_TEX_WIDTH_SHIFT) ")\n"
+		"vec4  tfeBufferFetch(sampler2D b, int i)  { return texelFetch(b, TFE_BUFFER_COORD(i), 0); }\n"
+		"ivec4 tfeBufferFetch(isampler2D b, int i) { return texelFetch(b, TFE_BUFFER_COORD(i), 0); }\n"
+		"uvec4 tfeBufferFetch(usampler2D b, int i) { return texelFetch(b, TFE_BUFFER_COORD(i), 0); }\n";
+	std::string vertexSource = glesShaderSource(vertexShaderGLSL), fragmentSource = glesShaderSource(fragmentShaderGLSL);
 	vertexShaderGLSL = vertexSource.c_str();
 	fragmentShaderGLSL = fragmentSource.c_str();
 #else

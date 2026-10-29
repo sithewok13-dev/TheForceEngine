@@ -27,6 +27,7 @@ namespace OpenGL_Caps
 	bool deviceSupportsGpuBlit();
 	bool deviceSupportsGpuColorConversion();
 	bool deviceSupportsGpuRenderer();
+	bool deviceSupportsClipDistances();
 
 	u32 getDeviceTier();
 	s32 getMaxTextureBufferSize();

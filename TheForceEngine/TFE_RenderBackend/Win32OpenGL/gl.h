@@ -5245,9 +5245,9 @@ GLAD_API_CALL int gladLoadGL( GLADloadfunc load);
 
 #ifdef TFE_GLES
 /* TFE on OpenGL ES 3.0 (iOS, through ANGLE): the ES names for the few desktop
- * OpenGL calls TFE makes on the software renderer's path, and no-ops for the
- * ones ES 3.0 has no equivalent for (wireframe, texture buffers: only the
- * editor and the GPU renderer use them, and neither is offered there). */
+ * OpenGL calls TFE makes, and no-ops for the ones ES 3.0 has no equivalent for
+ * (wireframe: only the editor uses it; texture buffers: ShaderBuffer uses 2D
+ * textures there instead, see shaderBuffer.cpp). */
 #undef glClearDepth
 #define glClearDepth glClearDepthf
 #undef glDepthRange

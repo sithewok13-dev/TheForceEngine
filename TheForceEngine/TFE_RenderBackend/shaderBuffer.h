@@ -8,6 +8,13 @@
 
 #include <TFE_System/types.h>
 
+#ifdef TFE_GLES
+// The width of the 2D textures that stand in for texture buffers on OpenGL
+// ES 3.0; shader.cpp reads element i at (i % width, i / width).
+#define SHADER_BUFFER_TEX_WIDTH_SHIFT 11
+#define SHADER_BUFFER_TEX_WIDTH (1 << SHADER_BUFFER_TEX_WIDTH_SHIFT)
+#endif
+
 enum BufferChannelType
 {
 	BUF_CHANNEL_UINT = 0,
@@ -47,6 +54,16 @@ private:
 	u32 m_count;
 	u32 m_size;
 	u32 m_gpuHandle[2];
+#ifdef TFE_GLES
+	// OpenGL ES 3.0 has no texture buffers: the data lives in 2D textures,
+	// SHADER_BUFFER_TEX_WIDTH texels wide, a few in turn so that an update
+	// doesn't have to wait for the GPU to finish with the last one.
+	enum { RING_SIZE = 3 };
+	u32 m_ring[RING_SIZE];
+	u32 m_ringIndex;
+	u32 m_texHeight;
+	u32 m_glFormat, m_glType;
+#endif
 	bool m_dynamic;
 	bool m_initialized;
 };
