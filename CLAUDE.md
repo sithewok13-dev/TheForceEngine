@@ -9,8 +9,15 @@ They own both the original Dark Forces and Nightdive's Dark Forces Remaster
 - **Build branch:** `ios`. `master` is left as upstream (luciusDXL/TheForceEngine).
 - **Stage 1 (done):** the app starts, finds the player's files, plays in TFE's
   software renderer at full screen with sound and music, menus by touch (SDL's
-  touch-as-mouse, drag-to-scroll in ImGui windows). **Stage 2 (next):** touch
-  game controls, following the standard below.
+  touch-as-mouse, drag-to-scroll in ImGui windows). **Stage 2 (in progress):**
+  touch game controls, following the standard below. Done: the finger is the
+  game's mouse (main.cpp, display pixels; menus map it onto their 4:3 screen),
+  a tap skips cutscenes, the game starts at the Agent menu (no intro), the
+  agent name box brings up the keyboard, and `TFE_Input/touchControls.cpp`
+  (stick, look drag, FIRE/ALT/JUMP/CROUCH/USE, MENU, QUICK SAVE/LOAD hold,
+  MAP, NEXT WPN tap; drawn with ImGui, up while a mission plays with no menu
+  open). Not yet: the MENU tray (SENS, GYRO, FPS, keyboard), weapon wheel,
+  haptics, the real safe area (fixed insets now).
 - **iOS code:**
   - `ios/`: the app around the engine. `ios_app.cmake` (bundle, Info.plist,
     icon, support files, ANGLE frameworks), `Info.plist.in`, `Assets.xcassets`,

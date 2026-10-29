@@ -1,6 +1,9 @@
 #include <cstring>
 
 #include "inputMapping.h"
+#ifdef TFE_IOS
+#include "touchControls.h"
+#endif
 #include <TFE_Game/igame.h>
 #include <TFE_FileSystem/paths.h>
 #include <TFE_Settings/settings.h>
@@ -635,8 +638,10 @@ namespace TFE_Input
 		SDL_GetRelativeMouseState(&mouseX, &mouseY);
 		SDL_GetMouseState(&mouseAbsX, &mouseAbsY);
 	#ifdef TFE_IOS
-		// iOS: where the finger is, from the touch events (main.cpp)
+		// iOS: where the finger is, from the touch events (main.cpp), and
+		// the look drag of the touch controls in place of the mouse's motion
 		TFE_Input::getMousePos(&mouseAbsX, &mouseAbsY);
+		TFE_TouchControls::takeLook(&mouseX, &mouseY);
 	#endif
 
 		// Handle Playback

@@ -46,6 +46,9 @@
 
 #ifdef TFE_IOS
 #include <iosApp.h>
+#include <TFE_Input/touchControls.h>
+#include <TFE_DarkForces/GameUI/escapeMenu.h>
+#include <TFE_DarkForces/GameUI/pda.h>
 #endif
 
 #ifdef _WIN32
@@ -123,7 +126,6 @@ void handleEvent(SDL_Event& Event)
 		case SDL_MOUSEBUTTONDOWN:
 		{
 		#ifdef TFE_IOS
-			TFE_Input::touchTestCount(Event.button.which == SDL_TOUCH_MOUSEID ? 1 : 2);
 			if (Event.button.which == SDL_TOUCH_MOUSEID) { break; }	// (the finger, below)
 		#endif
 			TFE_Input::setMouseButtonDown(MouseButton(Event.button.button - SDL_BUTTON_LEFT));
@@ -143,9 +145,11 @@ void handleEvent(SDL_Event& Event)
 		case SDL_FINGERMOTION:
 		case SDL_FINGERUP:
 		{
+			// the touch controls first, while a mission is being played
+			if (TFE_TouchControls::handleFinger(&Event)) { break; }
+
 			static bool s_fingerActive = false;
 			static SDL_FingerID s_fingerId = 0;
-			if (Event.type == SDL_FINGERDOWN) { TFE_Input::touchTestCount(0); }
 			if (Event.type == SDL_FINGERDOWN && !s_fingerActive)
 			{
 				s_fingerActive = true;
@@ -760,6 +764,14 @@ int main(int argc, char* argv[])
 			inputMapping_endFrame();
 			continue;
 		}
+	#ifdef TFE_IOS
+		// iOS: the touch controls are up while a mission is being played (not
+		// in its menus), and add their stick, buttons and actions
+		TFE_TouchControls::setActive(s_curState == APP_STATE_GAME && s_curGame && s_curGame->canSave() &&
+			!TFE_DarkForces::escapeMenu_isOpen() && !TFE_DarkForces::pda_isOpen() && !TFE_FrontEndUI::isConsoleOpen() &&
+			!TFE_FrontEndUI::isConfigMenuOpen());
+		TFE_TouchControls::apply();
+	#endif
 
 		// Can we save?
 		TFE_FrontEndUI::setCanSave(s_curGame ? s_curGame->canSave() : false);

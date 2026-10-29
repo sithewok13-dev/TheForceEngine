@@ -59,10 +59,6 @@ namespace TFE_Input
 	// iOS: the game's own text box wants the on-screen keyboard
 	void setGameTextInput(bool enable);
 	bool gameTextInput();
-	// iOS touch test: counts of finger downs, SDL's touch-mouse downs, other
-	// mouse downs and the presses the game saw (shown on screen)
-	void touchTestCount(s32 kind);
-	const s32* touchTestCounts();
 	bool relativeModeEnabled();
 	void setRepeating(bool repeat);
 	bool isRepeating();

@@ -1,4 +1,7 @@
 #include <TFE_Input/input.h>
+#ifdef TFE_IOS
+#include <TFE_Input/touchControls.h>
+#endif
 #include <TFE_FileSystem/filestream.h>
 #include <TFE_System/system.h>
 #include <TFE_System/parser.h>
@@ -27,7 +30,6 @@ namespace TFE_Input
 	u8 s_mouseDown[MBUTTON_COUNT] = { 0 };
 	u8 s_mousePressed[MBUTTON_COUNT] = { 0 };
 	bool s_gameTextInput = false;
-	s32 s_touchTest[4] = { 0 };
 	
 	s32 s_mouseWheel[2] = { 0 };
 	s32 s_mouseMove[2] = { 0 };
@@ -57,10 +59,12 @@ namespace TFE_Input
 	////////////////////////////////////////////////////////
 	void endFrame()
 	{
+	#ifdef TFE_IOS
+		TFE_TouchControls::endFrame();
+	#endif
 		s_mouseWheel[0] = 0;
 		s_mouseWheel[1] = 0;
 		memset(s_buttonPressed, 0, CONTROLLER_BUTTON_COUNT);
-		if (s_mousePressed[MBUTTON_LEFT]) { s_touchTest[3]++; }
 		memset(s_mousePressed,  0, MBUTTON_COUNT);
 		memset(s_keyPressed,    0, KEY_COUNT);
 		memset(s_keyPressedRepeat, 0, KEY_COUNT);
@@ -381,16 +385,6 @@ namespace TFE_Input
 	bool gameTextInput()
 	{
 		return s_gameTextInput;
-	}
-
-	void touchTestCount(s32 kind)
-	{
-		s_touchTest[kind]++;
-	}
-
-	const s32* touchTestCounts()
-	{
-		return s_touchTest;
 	}
 
 	bool relativeModeEnabled()
