@@ -525,6 +525,19 @@ namespace TFE_DarkForces
 		out.rgba.assign(size_t(out.w) * out.h, 0u);
 		memcpy(&out.rgba[size_t(r) * out.w], img.rgba.data(), img.rgba.size() * 4);
 		const f32 mid = 0.5f * f32(x0 + x1), half = 0.5f * f32(x1 - x0 + 1);
+		// only the hair's dark colours (the top rows also have some of his
+		// forehead, which made the crown look bald)
+		std::vector<u32> hair;
+		for (s32 y = 0; y < min(4, img.h); y++)
+		{
+			for (s32 x = x0; x <= x1; x++)
+			{
+				const u32 c = img.rgba[size_t(y) * img.w + x];
+				const s32 rr = c & 0xff, gg = (c >> 8) & 0xff, bb = (c >> 16) & 0xff;
+				if (c && rr * 3 + gg * 6 + bb < 900) { hair.push_back(c); }
+			}
+		}
+		if (hair.empty()) { hair.push_back(0xff1a2636u); }	// (a dark brown)
 		for (s32 k = 1; k <= r; k++)
 		{
 			const f32 t = f32(k) / f32(r + 1);
@@ -536,11 +549,7 @@ namespace TFE_DarkForces
 				// random so they don't streak, drawn in towards the middle as
 				// the crown rounds off, a little darker at its edge)
 				const u32 hsh = u32(x * 73856093) ^ u32(k * 19349663);
-				const s32 sx = clamp(s32(mid + (f32(x) - mid) * half / maxf(hw, 1.0f)) + s32(hsh % 3) - 1, x0, x1);
-				const s32 sy = s32((hsh >> 4) % 3);
-				u32 c = img.rgba[size_t(sy) * img.w + sx];
-				if (!c) { c = img.rgba[sx]; }
-				if (!c) { continue; }
+				u32 c = hair[(hsh >> 3) % hair.size()];
 				const f32 edge = fabsf(f32(x) - mid) / maxf(hw, 1.0f);
 				if (edge > 0.8f || k > r - 3)
 				{
