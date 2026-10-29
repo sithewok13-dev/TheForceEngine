@@ -17,6 +17,9 @@
 #include <TFE_FrontEndUI/frontEndUi.h>
 #include <TFE_Settings/settings.h>
 #include <TFE_Jedi/Renderer/virtualFramebuffer.h>
+#include <TFE_Jedi/Renderer/rcommon.h>
+#include <TFE_Jedi/Level/rtexture.h>
+#include <TFE_Asset/spriteAsset_Jedi.h>
 #include <SDL.h>
 #include <math.h>
 #include <string.h>
@@ -128,6 +131,100 @@ namespace TFE_DarkForces
 		}
 	}
 
+	// The weapon wheel's pictures: the game's own pickup sprites (the fists
+	// and the pistol have none: their first-person view instead), in the
+	// level's palette, cropped to what's drawn and scaled to fit 64 x 64
+	// whole pixels (index 0 is see-through)
+	static const char* c_weaponIcon[WPN_COUNT] =
+	{
+		"PUNCH1.BM", "PISTOL1.BM", "IST-GUNI.FME", "IDET.FME", "IAUTOGUN.FME",
+		"IFUSION.FME", "IMORTAR.FME", "IMINE.FME", "ICONCUS.FME", "ICANNON.FME",
+	};
+
+	// An 8-bit picture, column by column, the bottom row first (as Dark
+	// Forces keeps them)
+	struct IconSource
+	{
+		s32 w = 0, h = 0;
+		u8 pixels[256 * 256];
+		u8 at(s32 x, s32 y) const { return pixels[x * h + y]; }
+	};
+
+	static bool loadIconSource(const char* name, IconSource* src)
+	{
+		const size_t len = strlen(name);
+		if (len > 3 && strcasecmp(name + len - 3, ".BM") == 0)
+		{
+			TextureData* tex = bitmap_load(name, 1, POOL_GAME);
+			if (!tex || !tex->image || tex->width > 256 || tex->height > 256) { return false; }
+			src->w = tex->width;
+			src->h = tex->height;
+			memcpy(src->pixels, tex->image, (size_t)src->w * src->h);
+			return true;
+		}
+		JediFrame* frame = TFE_Sprite_Jedi::getFrame(name, POOL_GAME);
+		WaxCell* cell = frame ? WAX_CellPtr(frame, frame) : nullptr;
+		if (!cell || cell->sizeX > 256 || cell->sizeY > 256 || cell->sizeY > WAX_DECOMPRESS_SIZE) { return false; }
+		src->w = cell->sizeX;
+		src->h = cell->sizeY;
+		const u32* columns = (const u32*)((const u8*)frame + cell->columnOffset);
+		const u8* image = (const u8*)cell + sizeof(WaxCell);
+		u8 column[WAX_DECOMPRESS_SIZE];
+		for (s32 x = 0; x < src->w; x++)
+		{
+			const u8* col = image + columns[x];
+			if (cell->compressed == 1)
+			{
+				sprite_decompressColumn((const u8*)cell + columns[x], column, src->h);
+				col = column;
+			}
+			memcpy(&src->pixels[x * src->h], col, src->h);
+		}
+		return true;
+	}
+
+	// (RGBA, not premultiplied, top row first; 0 x 0 if there is none)
+	static void makeWeaponIcon(s32 weapon, u8* rgba, s32* outW, s32* outH)
+	{
+		*outW = *outH = 0;
+		const u32* pal = vfb_getPalette();
+		static IconSource src;
+		if (weapon < 1 || weapon > WPN_COUNT || !pal || !loadIconSource(c_weaponIcon[weapon - 1], &src)) { return; }
+		// what's drawn
+		s32 x0 = src.w, y0 = src.h, x1 = -1, y1 = -1;
+		for (s32 x = 0; x < src.w; x++)
+		{
+			for (s32 y = 0; y < src.h; y++)
+			{
+				if (!src.at(x, y)) { continue; }
+				x0 = min(x0, x); x1 = max(x1, x);
+				y0 = min(y0, y); y1 = max(y1, y);
+			}
+		}
+		if (x1 < x0) { return; }
+		const s32 cw = x1 - x0 + 1, ch = y1 - y0 + 1;
+		// whole pixels up to fit, or evenly down
+		const s32 up = max(1, 64 / max(cw, ch));
+		const f32 down = max(1.0f, f32(max(cw, ch)) / 64.0f);
+		const s32 w = (cw * up > 64) ? max(1, s32(cw / down)) : cw * up;
+		const s32 h = (ch * up > 64) ? max(1, s32(ch / down)) : ch * up;
+		for (s32 y = 0; y < h; y++)
+		{
+			for (s32 x = 0; x < w; x++)
+			{
+				const s32 sx = x0 + ((cw * up > 64) ? min(cw - 1, s32(x * down)) : x / up);
+				const s32 sy = y0 + ((ch * up > 64) ? min(ch - 1, s32(y * down)) : y / up);
+				const u8 index = src.at(sx, (y0 + y1) - sy);	// (top row first)
+				u8* d = rgba + ((size_t)y * w + x) * 4;
+				const u32 c = pal[index];
+				d[0] = u8(c & 0xff); d[1] = u8((c >> 8) & 0xff); d[2] = u8((c >> 16) & 0xff);
+				d[3] = index ? 255 : 0;
+			}
+		}
+		*outW = w;
+		*outH = h;
+	}
+
 	// The sithewok cheat, from the overlay's bits: god mode, everything given
 	// as it comes on and as each level starts, ammo kept full; flying and
 	// going through walls while those are on
@@ -225,11 +322,15 @@ namespace TFE_DarkForces
 		IOSTouchWeapons weapons;
 		getWeapons(&weapons);
 		IOSTouch_SetWeapons(&weapons);
-		// (no weapon icons: the wheel shows the names)
-		const unsigned int wanted = IOSTouch_WantedIcons(SDL_GetTicks() / 1000.0);
+		// the wheel's pictures (where there's none, it shows the name)
+		const unsigned int wanted = playerThere() ? IOSTouch_WantedIcons(SDL_GetTicks() / 1000.0) : 0;
 		for (s32 i = 0; i < IOSTOUCH_WPN_MAX; i++)
 		{
-			if (wanted & (1u << i)) { IOSTouch_SetWeaponIcon(i, nullptr, 0, 0); }
+			if (!(wanted & (1u << i))) { continue; }
+			static u8 icon[64 * 64 * 4];
+			s32 w, h;
+			makeWeaponIcon(i, icon, &w, &h);
+			IOSTouch_SetWeaponIcon(i, (w && h) ? icon : nullptr, w, h);
 		}
 
 		IOSTouchHud hud;

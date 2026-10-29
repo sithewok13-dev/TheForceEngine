@@ -1571,9 +1571,12 @@ static void IOSTouch_UseTrayButton(int button)
 // hyphen given here.
 enum { WCOL_NONE = 0, WCOL_SHELLS, WCOL_BULLETS, WCOL_ROCKETS, WCOL_GRENADES, WCOL_NAPALM, WCOL_SNIPER,
        WCOL_ELECTRICITY, WCOL_CANNONBALLS, WCOL_COUNT };
+// (Dark Forces' HUD tones: the fists steel grey, energy the HUD's red, mortar
+// shells olive, mines yellow, detonators orange, plasma blue, power cells
+// amber -- indexed by the Serious Sam overlay's colour names)
 static const unsigned char _aubWheelColours[WCOL_COUNT][3] = {
-  { 255, 214, 120 }, { 255, 160, 80 }, { 120, 200, 255 }, { 255, 105, 90 }, { 110, 220, 170 },
-  { 255, 190, 60 }, { 190, 150, 255 }, { 90, 230, 230 }, { 200, 200, 215 },
+  { 176, 182, 192 }, { 150, 196, 90 }, { 236, 64, 44 }, { 232, 208, 64 }, { 255, 128, 40 },
+  { 255, 190, 60 }, { 90, 176, 255 }, { 244, 172, 48 }, { 200, 200, 215 },
 };
 typedef struct {
   int iWeapon;
@@ -4470,8 +4473,9 @@ static void IOSTouch_CheatEmblemPaths(CGFloat cx, CGFloat cy, CGFloat r, UIBezie
 // The middle's fonts (IOSTouch_WheelMiddleLayout measures with these)
 static UIFont *IOSTouch_MiddleFont(int iKind, CGFloat size)
 {
-  if (iKind == WLINE_TITLE) return [UIFont boldSystemFontOfSize:size];
-  return [UIFont systemFontOfSize:size weight:UIFontWeightSemibold];
+  // (Dark Forces: a monospaced face, as its HUD's and briefings' lettering)
+  if (iKind == WLINE_TITLE) return [UIFont monospacedSystemFontOfSize:size weight:UIFontWeightHeavy];
+  return [UIFont monospacedSystemFontOfSize:size weight:UIFontWeightSemibold];
 }
 
 static double IOSTouch_MiddleTextWidth(const char *str, int iKind, double fSize, void *pUser)
@@ -4523,7 +4527,10 @@ static CGImageRef IOSTouch_MakeIconImage(const unsigned char *pub, int w, int h)
   wheelView.userInteractionEnabled = NO; // touches are the overlay's
   wheelView.hidden = YES;
   wheelDisc = [CAShapeLayer layer];
-  wheelDisc.fillColor = [UIColor colorWithWhite:0.0 alpha:0.85].CGColor;
+  // (Dark Forces: gunmetal, with the HUD's red round its edge)
+  wheelDisc.fillColor = [UIColor colorWithRed:0.08 green:0.09 blue:0.11 alpha:0.88].CGColor;
+  wheelDisc.strokeColor = [UIColor colorWithRed:0.75 green:0.16 blue:0.10 alpha:0.9].CGColor;
+  wheelDisc.lineWidth = 2.0;
   [wheelView.layer addSublayer:wheelDisc];
   for (int i = 0; i < IOSTOUCH_WHEEL_MAX; i++) {
     CAShapeLayer *sl = [CAShapeLayer layer];
@@ -4708,7 +4715,9 @@ static CGImageRef IOSTouch_MakeIconImage(const unsigned char *pub, int w, int h)
         l.textColor = IOSTouch_Colour(af);
       }
       else {
-        l.textColor = [UIColor colorWithWhite:(ln->iKind == WLINE_COUNT ? 0.9 : 0.8) alpha:1.0];
+        // (the ammo count in the HUD's red LED colour)
+        l.textColor = (ln->iKind == WLINE_COUNT) ? [UIColor colorWithRed:1.0 green:0.30 blue:0.20 alpha:1.0]
+                                                 : [UIColor colorWithWhite:0.8 alpha:1.0];
       }
       l.bounds = CGRectMake(0, 0, 2.0 * R0, ceil(ln->fSize * 1.18) + 2.0);
       l.center = CGPointMake(c.x, c.y + ln->fDY);
