@@ -37,11 +37,12 @@
 #include <TFE_Jedi/Level/levelData.h>
 #include <TFE_Jedi/Memory/allocator.h>
 #include <TFE_Jedi/Renderer/jediRenderer.h>
+#include <TFE_Jedi/Renderer/rlimits.h>
 #include <TFE_Jedi/Renderer/RClassic_Float/rclassicFloatSharedState.h>
+#include <TFE_Jedi/Renderer/RClassic_GPU/modelGPU.h>
 #include <TFE_Jedi/Renderer/virtualFramebuffer.h>
 #include <TFE_Asset/modelAsset_jedi.h>
-#include <TFE_Archive/lfdArchive.h>
-#include <TFE_FileSystem/paths.h>
+#include <TFE_Asset/spriteAsset_Jedi.h>
 #include <TFE_Settings/settings.h>
 #include <TFE_RenderBackend/renderBackend.h>
 #include <TFE_Game/reticle.h>
@@ -49,6 +50,7 @@
 #include <math.h>
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <vector>
 #include <initializer_list>
 #include <algorithm>
@@ -402,310 +404,10 @@ namespace TFE_DarkForces
 		}
 		model->flags &= ~(MFLAG_DRAW_VERTICES | MFLAG_VERTEX_LIT);
 		s_figureModel = model;
+		// (the GPU renderer has the game's models in its buffers from when the
+		// level was loaded: the figure joins them the first time it's needed)
+		if (!model->drawId && TFE_Settings::getGraphicsSettings()->rendererIndex != 0) { model_loadGpuModels(); }
 		return model;
-	}
-
-	//////////////////////////////////////////////////////////////////
-	// Kyle in a selfie: the game's own cutscene art (the player's own
-	// LFD files, read when a selfie first needs them, never bundled):
-	// BRIEF2.LFD's "cukyle" (arms crossed, facing the camera, with its
-	// talking and eye frames laid on where the briefing lays them), in its
-	// own palette. Drawn close to the lens, over
-	// the photo view: true colour into the saved photo (both renderers),
-	// and in the nearest colours of the game's palette on the software
-	// renderer's screen.
-	//////////////////////////////////////////////////////////////////
-	struct KyleImage { s32 x = 0, y = 0, w = 0, h = 0; std::vector<u32> rgba; };	// (0: see-through; else 0xffBBGGRR)
-	static bool s_kyleTried = false, s_kyleLoaded = false;
-	static KyleImage s_kyleBust;
-	static std::vector<KyleImage> s_kyleTalk, s_kyleEyes;
-
-	static bool lfdRead(LfdArchive& lfd, const char* name, std::vector<u8>& out)
-	{
-		const u32 index = lfd.getFileIndex(name);
-		if (index == INVALID_FILE || !lfd.openFile(index)) { return false; }
-		const size_t n = lfd.getFileLength();
-		out.resize(n);
-		const bool ok = n > 8 && lfd.readFile(out.data(), n) == n;
-		lfd.closeFile();
-		return ok;
-	}
-
-	static void palFromPltt(const std::vector<u8>& d, u32* pal)
-	{
-		for (s32 i = 0; i < 256; i++) { pal[i] = 0xff000000u; }
-		if (d.size() < 2) { return; }
-		const s32 first = d[0], last = d[1];
-		for (s32 i = first; i <= last && i < 256; i++)
-		{
-			const size_t k = 2 + size_t(i - first) * 3;
-			if (k + 2 >= d.size()) { break; }
-			pal[i] = 0xff000000u | u32(d[k]) | (u32(d[k + 1]) << 8) | (u32(d[k + 2]) << 16);
-		}
-	}
-
-	// A DELT: its rectangle, then lines (u16 size: bit 0 run-length coded,
-	// the rest the pixel count; s16 x, y; the pixels)
-	static bool deltDecode(const u8* d, size_t n, const u32* pal, KyleImage& img)
-	{
-		if (n < 8) { return false; }
-		const s16 x1 = s16(d[0] | (d[1] << 8)), y1 = s16(d[2] | (d[3] << 8));
-		const s16 x2 = s16(d[4] | (d[5] << 8)), y2 = s16(d[6] | (d[7] << 8));
-		img.x = x1; img.y = y1; img.w = x2 - x1 + 1; img.h = y2 - y1 + 1;
-		if (img.w <= 0 || img.h <= 0 || img.w > 1024 || img.h > 1024) { return false; }
-		img.rgba.assign(size_t(img.w) * img.h, 0u);
-		size_t i = 8;
-		while (i + 2 <= n)
-		{
-			const u16 size = u16(d[i] | (d[i + 1] << 8));
-			i += 2;
-			if (!size || i + 4 > n) { break; }
-			const s32 x = s16(d[i] | (d[i + 1] << 8)) - x1, y = s16(d[i + 2] | (d[i + 3] << 8)) - y1;
-			i += 4;
-			const s32 count = size >> 1;
-			auto put = [&](s32 px, u8 v) { if (y >= 0 && y < img.h && x + px >= 0 && x + px < img.w) { img.rgba[size_t(y) * img.w + x + px] = pal[v]; } };
-			if (size & 1)
-			{
-				s32 px = 0;
-				while (px < count && i < n)
-				{
-					const u8 c = d[i++];
-					const s32 run = c >> 1;
-					if (c & 1)
-					{
-						if (i >= n) { break; }
-						const u8 v = d[i++];
-						for (s32 k = 0; k < run; k++) { put(px++, v); }
-					}
-					else
-					{
-						for (s32 k = 0; k < run && i < n; k++) { put(px++, d[i++]); }
-					}
-				}
-			}
-			else
-			{
-				for (s32 k = 0; k < count && i < n; k++) { put(k, d[i++]); }
-			}
-		}
-		return true;
-	}
-
-	// An ANIM's frames (u16 count, then u32 size + DELT each)
-	static void animDecode(const std::vector<u8>& d, const u32* pal, std::vector<KyleImage>& frames)
-	{
-		frames.clear();
-		if (d.size() < 2) { return; }
-		const s32 count = d[0] | (d[1] << 8);
-		size_t i = 2;
-		for (s32 k = 0; k < count && i + 4 <= d.size(); k++)
-		{
-			const u32 size = u32(d[i]) | (u32(d[i + 1]) << 8) | (u32(d[i + 2]) << 16) | (u32(d[i + 3]) << 24);
-			i += 4;
-			if (i + size > d.size()) { break; }
-			KyleImage img;
-			if (deltDecode(&d[i], size, pal, img)) { frames.push_back(img); }
-			i += size;
-		}
-	}
-
-	// The bust's hair runs off the top of the briefing's screen: a rounded
-	// crown is added above it, from the hair's own top rows, so his head is
-	// never sliced flat
-	static const s32 c_kyleCrown = 22;
-	static void addCrown(KyleImage& img)
-	{
-		if (img.w <= 0 || img.h <= 4) { return; }
-		s32 x0 = img.w, x1 = -1;
-		for (s32 x = 0; x < img.w; x++) { if (img.rgba[x]) { x0 = min(x0, x); x1 = max(x1, x); } }
-		if (x1 < x0) { return; }
-		const s32 r = c_kyleCrown;
-		KyleImage out;
-		out.x = img.x; out.y = img.y - r; out.w = img.w; out.h = img.h + r;
-		out.rgba.assign(size_t(out.w) * out.h, 0u);
-		memcpy(&out.rgba[size_t(r) * out.w], img.rgba.data(), img.rgba.size() * 4);
-		const f32 mid = 0.5f * f32(x0 + x1), half = 0.5f * f32(x1 - x0 + 1);
-		// only the hair's dark colours (the top rows also have some of his
-		// forehead, which made the crown look bald)
-		std::vector<u32> hair;
-		for (s32 y = 0; y < min(4, img.h); y++)
-		{
-			for (s32 x = x0; x <= x1; x++)
-			{
-				const u32 c = img.rgba[size_t(y) * img.w + x];
-				const s32 rr = c & 0xff, gg = (c >> 8) & 0xff, bb = (c >> 16) & 0xff;
-				if (c && rr * 3 + gg * 6 + bb < 900) { hair.push_back(c); }
-			}
-		}
-		if (hair.empty()) { hair.push_back(0xff1a2636u); }	// (a dark brown)
-		for (s32 k = 1; k <= r; k++)
-		{
-			const f32 t = f32(k) / f32(r + 1);
-			const f32 hw = half * sqrtf(1.0f - t * t) * (1.0f - 0.08f * t);
-			for (s32 x = s32(mid - hw); x <= s32(mid + hw); x++)
-			{
-				if (x < 0 || x >= img.w) { continue; }
-				// (the hair's own pixels from its top rows, picked about at
-				// random so they don't streak, drawn in towards the middle as
-				// the crown rounds off, a little darker at its edge)
-				const u32 hsh = u32(x * 73856093) ^ u32(k * 19349663);
-				u32 c = hair[(hsh >> 3) % hair.size()];
-				const f32 edge = fabsf(f32(x) - mid) / maxf(hw, 1.0f);
-				if (edge > 0.8f || k > r - 3)
-				{
-					const u32 d = 0xff000000u | (((c & 0xfefefe) >> 1) + ((c & 0xfcfcfc) >> 2));
-					c = d;
-				}
-				out.rgba[size_t(r - k) * out.w + x] = c;
-			}
-		}
-		img = out;
-	}
-
-	static bool kyleLoad()
-	{
-		if (s_kyleTried) { return s_kyleLoaded; }
-		s_kyleTried = true;
-		u32 pal[256];
-		std::vector<u8> data, palData;
-		FilePath path;
-		// the bust, arms crossed, facing the camera, with its talking and eye frames
-		if (TFE_Paths::getFilePath("BRIEF2.LFD", &path))
-		{
-			LfdArchive lfd;
-			if (lfd.open(path.path))
-			{
-				if (lfdRead(lfd, "cukyle.PLTT", palData) && lfdRead(lfd, "cukyle.DELT", data))
-				{
-					palFromPltt(palData, pal);
-					if (deltDecode(data.data(), data.size(), pal, s_kyleBust))
-					{
-						addCrown(s_kyleBust);
-						if (lfdRead(lfd, "kyltalkx.ANIM", data)) { animDecode(data, pal, s_kyleTalk); }
-						if (lfdRead(lfd, "kyleyesx.ANIM", data)) { animDecode(data, pal, s_kyleEyes); }
-					}
-				}
-				lfd.close();
-			}
-		}
-		s_kyleLoaded = !s_kyleBust.rgba.empty();
-		return s_kyleLoaded;
-	}
-
-	// One photo's Kyle: the picture (mirrored, a face frame laid on) and
-	// where the whole of it is, as fractions of the frame (it reaches past
-	// the frame's edges: only the frame cuts him, never the picture's own
-	// straight edges)
-	struct KyleShot { bool on = false; KyleImage img; f32 left = 0.0f, top = 0.3f, width = 0.5f, height = 1.0f; };
-	static KyleShot s_kyleShot;
-	// Rows where each side of the picture starts to cut through him (his
-	// body running off that side), and the frame's bottom must be above
-	// them on a side inside the frame
-	struct KyleCuts { s32 left, right; };
-
-	static s32 sideCutRow(const KyleImage& img, bool right)
-	{
-		const s32 x = right ? img.w - 1 : 0;
-		for (s32 y = 0; y < img.h; y++) { if (img.rgba[size_t(y) * img.w + x]) { return y; } }
-		return img.h;
-	}
-
-	static void kyleCompose(bool mirror, s32 talk, s32 eyes, KyleShot& shot)
-	{
-		KyleImage img = s_kyleBust;
-		auto layOn = [&](const KyleImage& o)
-		{
-			for (s32 y = 0; y < o.h; y++) for (s32 x = 0; x < o.w; x++)
-			{
-				const u32 c = o.rgba[size_t(y) * o.w + x];
-				const s32 tx = o.x + x - img.x, ty = o.y + y - img.y;
-				if (c && tx >= 0 && ty >= 0 && tx < img.w && ty < img.h) { img.rgba[size_t(ty) * img.w + tx] = c; }
-			}
-		};
-		if (talk >= 0 && talk < s32(s_kyleTalk.size())) { layOn(s_kyleTalk[talk]); }
-		if (eyes >= 0 && eyes < s32(s_kyleEyes.size())) { layOn(s_kyleEyes[eyes]); }
-		if (mirror)
-		{
-			for (s32 y = 0; y < img.h; y++)
-			{
-				u32* row = &img.rgba[size_t(y) * img.w];
-				for (s32 x = 0; x < img.w / 2; x++) { std::swap(row[x], row[img.w - 1 - x]); }
-			}
-		}
-		shot.img = img;
-	}
-
-	// Where Kyle is in a frame of this size, in its pixels
-	static void kyleRect(const KyleShot& shot, s32 w, s32 h, s32* x0, s32* y0, s32* dw, s32* dh)
-	{
-		*x0 = s32(floorf(shot.left * f32(w)));
-		*y0 = s32(floorf(shot.top * f32(h)));
-		*dw = s32(ceilf(shot.width * f32(w)));
-		*dh = s32(ceilf(shot.height * f32(h)));
-	}
-
-	// What of him is inside the frame (fractions, clipped to it)
-	static void kyleRectFrac(const KyleShot& shot, f32* u0, f32* v0, f32* u1, f32* v1)
-	{
-		*u0 = maxf(shot.left, 0.0f); *u1 = minf(shot.left + shot.width, 1.0f);
-		*v0 = maxf(shot.top, 0.0f); *v1 = 1.0f;
-	}
-
-	// On the software renderer's 8-bit frame, in the palette's nearest colours
-	static void kyleDraw8(const KyleShot& shot, u8* display, s32 w, s32 h, s32 stride, const u32* pal)
-	{
-		if (!shot.on || !display || !pal || w <= 0 || h <= 0) { return; }
-		s32 x0, y0, dw, dh;
-		kyleRect(shot, w, h, &x0, &y0, &dw, &dh);
-		if (dw <= 0 || dh <= 0) { return; }
-		// (each of the picture's colours to the nearest of the palette's, once)
-		std::vector<u32> colors;
-		std::vector<u8> nearest;
-		auto lookup = [&](u32 c) -> u8
-		{
-			for (size_t i = 0; i < colors.size(); i++) { if (colors[i] == c) { return nearest[i]; } }
-			const s32 r = c & 0xff, g = (c >> 8) & 0xff, b = (c >> 16) & 0xff;
-			s32 best = 0, bestD = 0x7fffffff;
-			for (s32 i = 1; i < 255; i++)
-			{
-				const u32 p = pal[i];
-				const s32 dr = s32(p & 0xff) - r, dg = s32((p >> 8) & 0xff) - g, db = s32((p >> 16) & 0xff) - b;
-				const s32 d = dr * dr * 3 + dg * dg * 4 + db * db * 2;
-				if (d < bestD) { bestD = d; best = i; }
-			}
-			colors.push_back(c);
-			nearest.push_back(u8(best));
-			return u8(best);
-		};
-		for (s32 y = max(y0, 0); y < min(y0 + dh, h); y++)
-		{
-			const s32 sy = min((y - y0) * shot.img.h / dh, shot.img.h - 1);
-			u8* row = display + size_t(y) * stride;
-			for (s32 x = max(x0, 0); x < min(x0 + dw, w); x++)
-			{
-				const u32 c = shot.img.rgba[size_t(sy) * shot.img.w + min((x - x0) * shot.img.w / dw, shot.img.w - 1)];
-				if (c) { row[x] = lookup(c); }
-			}
-		}
-	}
-
-	// Into a saved photo, true colour (bottom row first, as GL reads back)
-	static void kyleDrawRGBA(const KyleShot& shot, u8* p, s32 w, s32 h)
-	{
-		if (!shot.on || !p || w <= 0 || h <= 0) { return; }
-		s32 x0, y0, dw, dh;
-		kyleRect(shot, w, h, &x0, &y0, &dw, &dh);
-		if (dw <= 0 || dh <= 0) { return; }
-		for (s32 y = max(y0, 0); y < min(y0 + dh, h); y++)
-		{
-			const s32 sy = min((y - y0) * shot.img.h / dh, shot.img.h - 1);
-			u32* row = (u32*)(p + size_t(h - 1 - y) * w * 4);
-			for (s32 x = max(x0, 0); x < min(x0 + dw, w); x++)
-			{
-				const u32 c = shot.img.rgba[size_t(sy) * shot.img.w + min((x - x0) * shot.img.w / dw, shot.img.w - 1)];
-				if (c) { row[x] = c; }
-			}
-		}
 	}
 
 	//////////////////////////////////////////////////////////////////
@@ -720,6 +422,12 @@ namespace TFE_DarkForces
 	static const f32 c_lensClear = 3.0f;
 
 	// (moved: drawn somewhere else for the photo, in that sector's list)
+	// Objects added to the photo only while it is drawn (fireworks)
+	static const s32 c_maxExtras = 12;
+	struct Extra { SecObject obj; RSector* sector; u32 dirty; };
+	static Extra s_extras[c_maxExtras];
+	static s32 s_extraCount = 0;
+
 	struct Pose { SecObject* obj; angle14_32 yaw; s32 anim, frame; bool moved; vec3_fixed pos; RSector* sector; };
 	struct Saved
 	{
@@ -782,6 +490,7 @@ namespace TFE_DarkForces
 
 	static void pc_end()
 	{
+		s_extraCount = 0;
 		if (s_reticleWasOn)
 		{
 			// (a menu that opened meanwhile turns it back on as it closes)
@@ -827,7 +536,18 @@ namespace TFE_DarkForces
 			s_poses[i].moved = true;
 			s_poses[i].pos = { floatToFixed16(feet.x), floatToFixed16(feet.y), floatToFixed16(feet.z) };
 			s_poses[i].sector = sector;
+			return;
 		}
+		// (not posed yet: as they stand, until a pose is set)
+		if (s_poseCount >= c_maxPoses) { return; }
+		Pose& p = s_poses[s_poseCount++];
+		p.obj = obj;
+		p.yaw = obj->yaw;
+		p.anim = -1;
+		p.frame = 0;
+		p.moved = true;
+		p.pos = { floatToFixed16(feet.x), floatToFixed16(feet.y), floatToFixed16(feet.z) };
+		p.sector = sector;
 	}
 
 	// Into a sector's list, in a free slot (only where there's none does
@@ -976,6 +696,14 @@ namespace TFE_DarkForces
 			figureDirty = figureSector->dirtyFlags;
 			listAdd(figureSector, &s_figure);
 		}
+		for (s32 i = 0; i < s_extraCount; i++)
+		{
+			Extra& e = s_extras[i];
+			e.obj.self = &e.obj;
+			e.obj.sector = nullptr;
+			e.dirty = e.sector->dirtyFlags;
+			listAdd(e.sector, &e.obj);
+		}
 		// What the renderer marks for the automap
 		const u32 sectorCount = s_levelState.sectorCount;
 		s_savedSectorState.resize(sectorCount * 6);
@@ -1001,7 +729,14 @@ namespace TFE_DarkForces
 		renderer_computeCameraTransform(s_camSector, toAngle14(clampf(s_camPitch, -c_pitchMax, c_pitchMax)), toAngle14(s_camYaw),
 			floatToFixed16(s_camPos.x), floatToFixed16(s_camPos.y), floatToFixed16(s_camPos.z));
 		renderer_setWorldAmbient(s_flash ? max(s_playerLight, c_flashLight) : s_playerLight);
+		// (what the renderer notes as drawn, for the game's auto-aim: as the
+		// player's own view left it)
+		SecObject* drawnObj[MAX_DRAWN_OBJ_STORE];
+		const s32 drawnCount = s_drawnObjCount;
+		memcpy(drawnObj, s_drawnObj, sizeof(drawnObj));
 		drawWorld(display, s_camSector, colormap, lightSourceRamp);
+		s_drawnObjCount = drawnCount;
+		memcpy(s_drawnObj, drawnObj, sizeof(drawnObj));
 
 		// Everything back as it was
 		sec = s_levelState.sectors;
@@ -1020,6 +755,12 @@ namespace TFE_DarkForces
 				wall->visible = s_savedWallState[wi++];
 				wall->drawFrame = s_savedWallState[wi++];
 			}
+		}
+		for (s32 i = s_extraCount - 1; i >= 0; i--)
+		{
+			Extra& e = s_extras[i];
+			listRemove(&e.obj);
+			e.sector->dirtyFlags = e.dirty;
 		}
 		if (figureSector)
 		{
@@ -1126,87 +867,89 @@ namespace TFE_DarkForces
 	}
 
 	//////////////////////////////////////////////////////////////////
-	// Selfies
+	// Group photos (CAMERA's long press): the player's phone held out or up
+	// where they stand, turned to the enemies nearest them, who turn to the
+	// lens and fool about for it, each photo a different game (a party, a
+	// photobomb, someone posing on the floor, a class photo, fireworks
+	// overhead, a conga). The player isn't in it. Everything is posed,
+	// moved or added only while the photo view is drawn (see pc_draw).
 	//////////////////////////////////////////////////////////////////
-	// Sam's selfie (IOSSelfie.cpp), in Dark Forces units (x3.2 the metres):
-	// enemies within c_sfRange of the player in their sight, the nearest
-	// IOSSELFIE_MAX_PEOPLE; one selfie in c_sfBombChance a photobomber from
-	// further out
-	static const f32 c_sfRange = 96.0f;
-	static const f32 c_sfBombRange = 144.0f;
-	static const s32 c_sfBombChance = 6;
-	// The camera: at one of c_sfDirs headings round the player, from 5
-	// units out (the figure has no face to see from nearer), as near as
-	// c_sfCamNear (or c_sfCamMax where nothing near will do), a ball of
-	// c_sfClearance round it clear; c_sfLift over the eyes (now and then up
-	// or down a little, or held up high over a crowd)
-	static const s32 c_sfDirs = 16;
-	static const f32 c_sfCamNear = 12.0f;
-	static const f32 c_sfCamMax = 38.0f;
-	static const f32 c_sfClearance = 0.8f;
-	static const f32 c_sfLift = 0.5f, c_sfLiftUp = 1.9f, c_sfLiftDown = -0.8f, c_sfLiftHigh = 3.8f, c_sfLiftHigher = 8.0f;
-	static const f32 c_sfPitchDownMax = degToRad(35.0f);
-	// Enemies nearer the camera than the player are left out of the photo
-	static const f32 c_sfFrontMargin = 1.0f, c_sfBeside = 1.6f, c_sfLensClear = 4.8f;
-	static const f32 c_sfCrowded = 0.8f;
-	// What fits (fractions of the half frame), and how a photo is scored
-	static const f32 c_sfFitX = 0.88f, c_sfFitUp = 0.80f, c_sfFitDown = 0.85f;
-	static const f32 c_sfFitPlayerX = 0.60f, c_sfFitPlayerY = 0.55f;
-	static const s32 c_sfFacesClear = 3;
-	static const f32 c_sfDistCost = 0.078f, c_sfClutterCost = 12.0f;
-	static const f32 c_sfWallCost = 8.0f;	// (a wall filling the frame by the camera)
-	static const f32 c_sfCentreX = 0.35f, c_sfCentreY = 0.40f;
-	static const f32 c_sfHeadMargin = 0.02f;
-	// Poses
-	static const f32 c_sfTurnSmall = degToRad(7.0f);
-	static const s32 c_sfTurnChance = 45;
-	static const f32 c_sfTurnMin = degToRad(20.0f), c_sfTurnMax = degToRad(35.0f);
-	static const f32 c_sfPhoneTurn = degToRad(20.0f);
-	static const s32 c_sfGroupChance = 5, c_sfRareChance = 20;
-	static const s32 c_sfMaxPersons = IOSSELFIE_MAX_PEOPLE_LIMIT + 2;
-	static const s32 c_sfMaxBlockers = 256;
+	// Who: enemies within c_gpRange of the player, in their sight, the
+	// nearest IOSSELFIE_MAX_PEOPLE (as set); nothing but a photobomber
+	// nearer the lens than c_gpNear
+	static const f32 c_gpRange = 64.0f;
+	static const f32 c_gpNear = 7.5f;
+	static const s32 c_gpMaxPersons = IOSSELFIE_MAX_PEOPLE_LIMIT;
+	// The camera tips at most this much (the classic renderer shears, the
+	// GPU one turns: this little, both frame alike)
+	static const f32 c_gpPitchMax = degToRad(12.0f);
+	// What fits (fractions of the half frame)
+	static const f32 c_gpFitX = 0.86f, c_gpFitUp = 0.78f, c_gpFitDown = 0.80f;
+	static const f32 c_gpHeadMargin = 0.02f;
+	static const s32 c_gpShotsKept = 8;
 
 	enum { POSE_ATTACK = 0, POSE_ANGER, POSE_IDLE, POSE_WOUND, POSE_MOVE, POSE_KINDS };
-	enum { RARE_NONE = 0, RARE_STARE, RARE_OBLIVIOUS, RARE_ALLEYES };
+	enum { THEME_PARTY = 0, THEME_PHOTOBOMB, THEME_FLOOR, THEME_CLASS, THEME_FIREWORKS, THEME_CONGA, THEMES };
+	static const s32 c_themeWeights[THEMES] = { 24, 18, 14, 14, 16, 14 };
+	static const s32 c_themeLeast[THEMES] = { 1, 1, 2, 2, 1, 2 };	// (people it needs)
+	enum { CAM_EYE = 0, CAM_RAISED, CAM_LOW, CAM_STYLES };
+	static const s32 c_styleWeights[CAM_STYLES] = { 50, 32, 18 };
+
+	// A choice at random by weight, but not `notThis` (the last photo's)
+	static s32 pickWeighted(const s32* weights, s32 n, s32 notThis)
+	{
+		s32 total = 0;
+		for (s32 i = 0; i < n; i++) { if (i != notThis) { total += weights[i]; } }
+		s32 r = randInt(max(total, 1));
+		for (s32 i = 0; i < n; i++)
+		{
+			if (i == notThis) { continue; }
+			if (r < weights[i]) { return i; }
+			r -= weights[i];
+		}
+		return 0;
+	}
 
 	struct Person
 	{
-		SecObject* obj;		// (null: the player)
-		bool player;
-		f32 dist;
-		V3 head, mid, pos;
-		f32 height, headR, bodyR;
-		bool inFrame, bomber;
+		SecObject* obj;
+		f32 dist;				// (from the player)
+		V3 pos, head, mid;
+		V3 homePos, homeHead, homeMid;	// (where they really stand: a photo's moves are its own)
+		f32 height, headR, bodyR, width;
+		bool inFrame;
 	};
-	struct Blocker { SecObject* obj; V3 head, mid; f32 headR, bodyR; };
 
-	static bool s_sfActive = false, s_sfPosed = false, s_sfFailed = false;
-	static Person s_people[c_sfMaxPersons];	// [0]: the player
+	static bool s_sfActive = false, s_sfPosed = false, s_sfFailed = false, s_sfNoOne = false;
+	static Person s_people[c_gpMaxPersons];
 	static s32 s_peopleCount = 0;
-	static Blocker s_blockers[c_sfMaxBlockers];
-	static s32 s_blockerCount = 0;
-	static V3 s_sfCam;
-	static RSector* s_sfCamSector = nullptr;
-	static f32 s_sfLiftNow = c_sfLift;
-	static bool s_phoneLeft = false;
 	static s32 s_maxPeople = IOSSELFIE_MAX_PEOPLE;
-	static bool s_sfKyle = false;	// (this selfie is with Kyle's portrait, by the lens)
-	static f32 s_sfLensClearNow = c_sfLensClear;
+	static s32 s_gpTheme = -1, s_gpThemeBefore = -1, s_gpStyle = -1, s_gpShot = 0;
+	static SecObject* s_gpBomber = nullptr;
+	static V3 s_gpUsedCams[c_gpShotsKept];
+	static f32 s_gpUsedYaws[c_gpShotsKept];
+	static s32 s_gpUsedCount = 0;
 
 	// (gpu: the GPU renderer turns the view up and down; the classic one shears it)
 	struct View { V3 pos; f32 yaw, pitch, tanX, tanY, tanP; V3 fwd, right; bool gpu = false; };
 
-	static void makeView(View& v, V3 cam, V3 at, f32 tiltUp)
+	static void finishView(View& v)
 	{
-		v.pos = cam;
-		const V3 d = at - cam;
-		v.yaw = (lenXZ(d) < 1e-3f) ? s_lookYaw : headingTo(cam, at);
-		v.pitch = clampf(atan2f(-d.y, maxf(lenXZ(d), 1e-3f)) + tiltUp, -c_pitchMax, c_pitchMax);
 		viewTans(&v.tanX, &v.tanY);
 		v.tanP = tanf(v.pitch);
 		v.fwd = flatDir(v.yaw);
 		v.right = v3(cosf(v.yaw), 0.0f, -sinf(v.yaw));
 		v.gpu = TFE_Settings::getGraphicsSettings()->rendererIndex != 0;
+	}
+
+	static View viewAt(V3 cam, f32 yaw, f32 pitch)
+	{
+		View v;
+		v.pos = cam;
+		v.yaw = yaw;
+		v.pitch = pitch;
+		finishView(v);
+		return v;
 	}
 
 	// Where a point is in the view (across, up: fractions of the half frame;
@@ -1234,44 +977,21 @@ namespace TFE_DarkForces
 		*fy = (-d.y / z - v.tanP) / v.tanY;
 	}
 
-	static bool personInFrame(const View& v, const Person& p)
+	// A point of the frame (-1..1 across, up) at a distance, in the level
+	static V3 pointAt(const View& v, f32 fx, f32 depth)
 	{
-		f32 x, y, z;
-		project(v, p.head, &x, &y, &z);
-		if (z <= 0.15f) { return false; }
-		if (p.player) { return fabsf(x) <= c_sfFitPlayerX && fabsf(y) <= c_sfFitPlayerY; }
-		return fabsf(x) <= c_sfFitX && y <= c_sfFitUp && y >= -c_sfFitDown;
+		return v.pos + v.fwd * depth + v.right * (fx * v.tanX * depth);
 	}
 
-	// Whether an enemy (its middle and size) is nearer a camera at cam than
-	// the player, or level with them and over them: left out of the photo
-	static bool inFront(V3 cam, V3 mid, f32 bodyR)
+	static bool headInFrame(const View& v, V3 head, f32* z)
 	{
-		const Person& me = s_people[0];
-		const V3 d = mid - cam;
-		// (how far each is along the way to the player: one beside the
-		// camera is nearer than the player, however far off to the side)
-		const V3 toPlayer = me.mid - cam;
-		const f32 fPlayer = len(toPlayer);
-		if (fPlayer < 0.01f) { return true; }
-		const f32 fd = maxf(dot(d, toPlayer) / fPlayer, 0.0f);
-		const f32 dist = len(d);
-		if (dist < s_sfLensClearNow || fd < fPlayer - c_sfFrontMargin) { return true; }
-		if (fd >= fPlayer + c_sfBeside) { return false; }
-		const V3 pv[2] = { me.head, me.mid };
-		const f32 pr[2] = { me.headR, me.bodyR };
-		for (s32 k = 0; k < 2; k++)
-		{
-			const V3 dp = pv[k] - cam;
-			const f32 fdp = len(dp);
-			if (fdp < 0.01f) { continue; }
-			if (angleBetween(d, dp) < bodyR / dist + pr[k] / fdp) { return true; }
-		}
-		return false;
+		f32 x, y;
+		project(v, head, &x, &y, z);
+		return *z > 0.15f && fabsf(x) <= c_gpFitX && y <= c_gpFitUp && y >= -c_gpFitDown;
 	}
 
-	// Whether person i's face is seen from the camera: no wall, and nobody
-	// nearer over it (but those left out)
+	// Whether person i's face is seen from the camera: no wall, nobody nearer
+	// over it (but those too near the lens, who are left out)
 	static bool faceClear(V3 cam, RSector* camSec, s32 i)
 	{
 		const Person& p = s_people[i];
@@ -1279,548 +999,26 @@ namespace TFE_DarkForces
 		const V3 di = p.head - cam;
 		const f32 fdi = len(di);
 		if (fdi < 0.01f) { return false; }
-		for (s32 j = 0; j <= s_blockerCount; j++)
+		for (s32 j = 0; j < s_peopleCount; j++)
 		{
-			Blocker bp;
-			const Blocker* b = &bp;
-			if (j < s_blockerCount) { b = &s_blockers[j]; }
-			else
-			{
-				bp.obj = nullptr; bp.head = s_people[0].head; bp.mid = s_people[0].mid;
-				bp.headR = s_people[0].headR; bp.bodyR = s_people[0].bodyR;
-				if (p.player || s_sfKyle) { continue; }
-			}
-			if (j < s_blockerCount && b->obj == p.obj) { continue; }
-			if (j < s_blockerCount && inFront(cam, b->mid, b->bodyR)) { continue; }
-			const V3 pv[2] = { b->head, b->mid };
-			const f32 pr[2] = { b->headR, b->bodyR };
+			if (j == i) { continue; }
+			const Person& b = s_people[j];
+			if (len(b.mid - cam) < c_gpNear) { continue; }
+			const V3 pv[2] = { b.head, b.mid };
+			const f32 pr[2] = { b.headR, b.bodyR };
 			for (s32 k = 0; k < 2; k++)
 			{
 				const V3 dj = pv[k] - cam;
 				const f32 fdj = len(dj);
 				if (fdj < 0.01f || fdj >= fdi - 0.3f) { continue; }
-				if (angleBetween(di, dj) < pr[k] / fdj + c_sfHeadMargin) { return false; }
+				if (angleBetween(di, dj) < pr[k] / fdj + c_gpHeadMargin) { return false; }
 			}
 		}
 		return true;
-	}
-
-	// How much of the frame things nearer than the player cover
-	static f32 clutter(const View& v)
-	{
-		const f32 fPlayer = len(s_people[0].head - v.pos);
-		f32 cover = 0.0f;
-		for (s32 j = 0; j < s_blockerCount; j++)
-		{
-			const Blocker& b = s_blockers[j];
-			if (inFront(v.pos, b.mid, b.bodyR)) { continue; }
-			f32 x, y, z;
-			project(v, b.mid, &x, &y, &z);
-			if (z <= 0.15f || z >= fPlayer) { continue; }
-			const f32 rx = b.bodyR / z / v.tanX, ry = b.bodyR / z / v.tanY;
-			const f32 ox = clampf(minf(x + rx, 1.0f) - maxf(x - rx, -1.0f), 0.0f, 2.0f);
-			const f32 oy = clampf(minf(y + ry, 1.0f) - maxf(y - ry, -1.0f), 0.0f, 2.0f);
-			cover += ox * oy / 4.0f;
-		}
-		return cover;
-	}
-
-	// How much of the frame is a wall right by the camera (lines across the
-	// frame, out as far as the player: 0 all clear .. 1 all wall)
-	static f32 wallByCamera(const View& v, RSector* camSec)
-	{
-		static const f32 across[4] = { -0.85f, -0.45f, 0.45f, 0.85f };
-		const f32 want = maxf(dot(s_people[0].head - v.pos, v.fwd), 2.0f);
-		f32 blocked = 0.0f;
-		for (f32 a : across)
-		{
-			const V3 to = v.pos + (v.fwd + v.right * (a * v.tanX)) * want + up(v.tanP * want);
-			const f32 l = len(to - v.pos);
-			blocked += 1.0f - clearDist(v.pos, camSec, to) / maxf(l, 0.01f);
-		}
-		return blocked / 4.0f;
-	}
-
-	static f32 score(const View& v, RSector* camSec, f32 dist, bool frameOnly)
-	{
-		if (!personInFrame(v, s_people[0])) { return -1e9f; }
-		if (!frameOnly && !faceClear(v.pos, camSec, 0)) { return -1e9f; }
-		f32 sc = 3.0f - c_sfDistCost * dist;
-		if (!frameOnly) { sc -= c_sfClutterCost * clutter(v) + c_sfWallCost * wallByCamera(v, camSec); }
-		for (s32 i = 1; i < s_peopleCount; i++)
-		{
-			const bool seen = personInFrame(v, s_people[i]) && !inFront(v.pos, s_people[i].mid, s_people[i].bodyR) &&
-				(frameOnly || faceClear(v.pos, camSec, i));
-			if (seen) { sc += 1.0f / (1.0f + 0.12f * f32(i - 1)); }
-			else if (i <= c_sfFacesClear) { sc -= 4.0f; }
-		}
-		return sc;
-	}
-
-	static V3 aimPoint()
-	{
-		V3 v = s_people[0].head * 3.0f;
-		f32 w = 3.0f;
-		for (s32 i = 1; i < s_peopleCount; i++)
-		{
-			const f32 wi = 1.0f / (1.0f + 0.25f * f32(i - 1));
-			v = v + s_people[i].head * wi;
-			w += wi;
-		}
-		return v * (1.0f / w);
-	}
-
-	static bool selfieLeftOut(SecObject* obj, V3 cam)
-	{
-		for (s32 j = 0; j < s_blockerCount; j++)
-		{
-			if (s_blockers[j].obj == obj) { return inFront(cam, s_blockers[j].mid, s_blockers[j].bodyR); }
-		}
-		return false;
-	}
-
-	static f32 pitchDown(V3 cam, V3 v)
-	{
-		const V3 d = v - cam;
-		return atan2f(d.y, maxf(lenXZ(d), 0.001f));	// (y down: looking down is > 0)
-	}
-
-	static bool placeSelfieCamera()
-	{
-		const V3 eye = s_people[0].head;
-		V3 group = v3(0, 0, 0);
-		f32 wg = 0.0f;
-		for (s32 i = 1; i < s_peopleCount && i <= 8; i++) { group = group + s_people[i].head; wg += 1.0f; }
-		V3 away = eye - (wg > 0.0f ? group * (1.0f / wg) : eye);
-		away.y = 0.0f;
-		const f32 awayYaw = (lenXZ(away) > 1.6f) ? atan2f(away.x, away.z) : s_lookYaw;
-		static const s32 steps[c_sfDirs] = { 2, -2, 1, -1, 3, -3, 0, 4, -4, 5, -5, 6, -6, 7, -7, 8 };
-		static const f32 dists[] = { 5.0f, 6.0f, 7.2f, 8.6f, 10.3f, 12.0f, 15.0f, 18.5f, 22.5f, 27.5f, 33.0f, 38.4f };
-		const s32 distCount = s32(sizeof(dists) / sizeof(dists[0]));
-		const V3 at = aimPoint();
-		f32 best = -1e8f;
-		V3 bestCam = eye;
-		RSector* bestSec = nullptr;
-		static const f32 liftCost[3] = { 0.0f, 0.4f, 0.8f };
-		s_solidLeftOut = selfieLeftOut;
-		for (s32 round = 0; round < 2 && best <= -1e7f; round++)
-		{
-			const f32 maxDist = round ? c_sfCamMax : c_sfCamNear;
-			for (s32 pass = 0; pass < 3; pass++)
-			{
-				const f32 lift = (pass == 0) ? s_sfLiftNow : ((pass == 1) ? c_sfLiftHigh : c_sfLiftHigher);
-				for (s32 k = 0; k < c_sfDirs; k++)
-				{
-					const f32 yaw = awayYaw + f32(steps[k]) * (2.0f * c_pi / f32(c_sfDirs)) * (s_phoneLeft ? -1.0f : 1.0f);
-					const V3 dir = flatDir(yaw);
-					const V3 far = eye + dir * c_sfCamMax + up(lift);
-					const f32 free = walkLine(eye, s_eyeSector, far, c_sfClearance, nullptr) - c_sfClearance;
-					for (s32 d = 0; d < distCount && dists[d] <= maxDist; d++)
-					{
-						const V3 cam = eye + dir * dists[d] + up(lift);
-						if (len(cam - eye) > free) { break; }
-						if (pitchDown(cam, at) > c_sfPitchDownMax || pitchDown(cam, eye + up(-1.0f)) > c_sfPitchDownMax) { continue; }
-						View v;
-						makeView(v, cam, at, 0.0f);
-						if (score(v, nullptr, dists[d], true) - liftCost[pass] <= best + 0.001f) { continue; }
-						RSector* camSec = nullptr;
-						if (!roomAt(eye, s_eyeSector, cam, c_sfClearance, &camSec)) { continue; }
-						const f32 sc = score(v, camSec, dists[d], false) - liftCost[pass];
-						if (sc > best + 0.001f)
-						{
-							best = sc;
-							bestCam = cam;
-							bestSec = camSec;
-						}
-					}
-				}
-				if (best > -1e7f && s_peopleCount == 1) { break; }
-			}
-		}
-		s_solidLeftOut = nullptr;
-		if (best <= -1e7f || !bestSec) { return false; }
-		s_sfCam = bestCam;
-		s_sfCamSector = bestSec;
-		RIGDBG("selfie cam %.2f %.2f %.2f score %.2f eye %.2f %.2f %.2f people %d\n", bestCam.x, bestCam.y, bestCam.z, best, eye.x, eye.y, eye.z, s_peopleCount);
-		return true;
-	}
-
-	// A pose: an animation and frame of this sprite for a pose of this kind
-	// (or the nearest kind it has)
-	static s32 randomPoseKind()
-	{
-		const s32 r = randInt(100);
-		if (r < 40) { return POSE_ATTACK; }
-		if (r < 52) { return POSE_ANGER; }
-		if (r < 77) { return POSE_IDLE; }
-		if (r < 87) { return POSE_WOUND; }
-		return POSE_MOVE;
-	}
-
-	static bool pickPose(SecObject* obj, s32 kind, s32* anim, s32* frame)
-	{
-		static const s32 order[POSE_KINDS][5] =
-		{
-			{ ANIM_ATTACK1, ANIM_ATTACK2, ANIM_ATTACK1_END, ANIM_IDLE, ANIM_MOVE },	// attack: aiming, firing
-			{ ANIM_ATTACK2, ANIM_ATTACK1_END, ANIM_ATTACK1, ANIM_IDLE, ANIM_MOVE },	// anger: the other attack
-			{ ANIM_IDLE, ANIM_MOVE, ANIM_ATTACK1, -1, -1 },							// standing about
-			{ ANIM_PAIN, ANIM_IDLE, ANIM_MOVE, -1, -1 },								// a flinch
-			{ ANIM_MOVE, ANIM_IDLE, ANIM_ATTACK1, -1, -1 },							// mid-stride
-		};
-		for (s32 i = 0; i < 5; i++)
-		{
-			const s32 action = order[kind][i];
-			if (action < 0) { break; }
-			const s32 a = waxAnimFor(obj, action);
-			if (a < 0) { continue; }
-			const WaxAnim* w = WAX_AnimPtr(obj->wax, a);
-			*anim = a;
-			// (standing: the first frame, as the game stands them; else any)
-			*frame = (action == ANIM_IDLE) ? 0 : randInt(w->frameCount);
-			return true;
-		}
-		return false;
-	}
-
-	// Shots and blasts in front of a face in the photo are left out
-	static void hideInFront()
-	{
-		forEachObject([&](SecObject* obj)
-		{
-			const s32 kind = objKind(obj);
-			if (kind != KIND_SHOT && kind != KIND_EFFECT) { return; }
-			if (pc_isHidden(obj)) { return; }
-			const V3 pos = fromFixed(obj->posWS) + up(fixed16ToFloat(max(obj->worldHeight, 0)) * 0.5f);
-			const V3 dp = pos - s_sfCam;
-			const f32 fdp = len(dp);
-			if (fdp < 0.3f) { pc_hide(obj); return; }
-			// (shots and blasts at the player: the figure stands for them, unhurt)
-			const V3 me = fromFixed(s_playerObject->posWS);
-			if (lenXZ(pos - me) < 3.5f && pos.y > me.y - c_figureHeight - 1.0f && pos.y < me.y + 1.0f) { pc_hide(obj); return; }
-			// (nor any between the camera and the player: the player is the nearest in it)
-			const V3 toPlayer = s_people[0].mid - s_sfCam;
-			const f32 fPlayer = len(toPlayer);
-			if (fPlayer > 0.01f && dot(dp, toPlayer) / fPlayer < fPlayer - 1.0f) { pc_hide(obj); return; }
-			for (s32 i = 0; i < s_peopleCount; i++)
-			{
-				const Person& p = s_people[i];
-				if (!p.inFrame) { continue; }
-				const V3 dh = p.head - s_sfCam;
-				const f32 fdh = len(dh);
-				if (fdh < 0.01f || fdp >= fdh) { continue; }
-				// (a face, and the body under it for the player)
-				const f32 r = (p.player ? p.bodyR : p.headR * 1.5f);
-				if (angleBetween(dp, dh) < r / fdh + 0.03f) { pc_hide(obj); return; }
-				if (p.player && angleBetween(dp, p.mid - s_sfCam) < p.bodyR * 1.5f / fdh + 0.03f) { pc_hide(obj); return; }
-			}
-		});
-	}
-
-	static void selfiePose()
-	{
-		s_poseCount = 0;
-		// The camera: aimed at the faces in the photo, the player near the
-		// middle; now and then tilted a little
-		V3 sum = v3(0, 0, 0);
-		f32 cnt = 0.0f;
-		for (s32 i = 0; i < s_peopleCount; i++)
-		{
-			if (i && !s_people[i].inFrame) { continue; }
-			const f32 w = i ? 1.0f : 2.0f;
-			sum = sum + s_people[i].head * w;
-			cnt += w;
-		}
-		const V3 at = sum * (1.0f / cnt) + up(-0.5f);
-		const f32 tilt = chance(3) ? (rand01() - 0.5f) * 2.0f * degToRad(4.0f) : 0.0f;
-		View v;
-		for (s32 t = 0; t <= 10; t++)
-		{
-			const f32 f = f32(t) * 0.1f;
-			makeView(v, s_sfCam, at * (1.0f - f) + (s_people[0].head + up(-1.0f)) * f, tilt);
-			f32 x, y, z;
-			project(v, s_people[0].head, &x, &y, &z);
-			if (z > 0.15f && fabsf(x) <= c_sfCentreX && fabsf(y) <= c_sfCentreY) { break; }
-		}
-		pc_place(s_sfCam, v.yaw, v.pitch, s_sfCamSector);
-		for (s32 i = 1; i < s_peopleCount; i++)
-		{
-			if (!s_people[i].bomber)
-			{
-				s_people[i].inFrame = personInFrame(v, s_people[i]) && s_people[i].dist <= c_sfRange && !pc_isHidden(s_people[i].obj);
-			}
-		}
-
-		s32 others = 0, bomber = -1;
-		for (s32 i = 1; i < s_peopleCount; i++)
-		{
-			if (!s_people[i].inFrame) { continue; }
-			others++;
-			if (s_people[i].bomber) { bomber = i; }
-		}
-		const s32 groupKind = (others >= 2 && chance(c_sfGroupChance)) ? randomPoseKind() : -1;
-		s32 rare = RARE_NONE, oblivious = -1;
-		if (others >= 1 && chance(c_sfRareChance))
-		{
-			const s32 r = randInt(3);
-			if (r == 0 && bomber >= 0) { rare = RARE_STARE; }
-			else if (r == 1 && others >= 2) { rare = RARE_OBLIVIOUS; }
-			else { rare = RARE_ALLEYES; }
-			if (rare == RARE_OBLIVIOUS)
-			{
-				s32 k = randInt(others);
-				for (s32 i = 1; i < s_peopleCount && oblivious < 0; i++)
-				{
-					if (s_people[i].inFrame && !s_people[i].bomber && k-- == 0) { oblivious = i; }
-				}
-			}
-		}
-		for (s32 i = 1; i < s_peopleCount; i++)
-		{
-			Person& p = s_people[i];
-			if (!p.inFrame || i == oblivious || !objValid(p.obj)) { continue; }
-			bool crowded = false;
-			for (s32 j = 0; j < s_peopleCount && !crowded; j++)
-			{
-				const Person& o = s_people[j];
-				if (j == i || !(j == 0 || o.inFrame)) { continue; }
-				crowded = len(o.mid - p.mid) < c_sfCrowded * (o.bodyR + p.bodyR);
-			}
-			V3 look = s_sfCam;
-			if (rare == RARE_STARE && i != bomber) { look = s_people[bomber].head; }
-			if (rare == RARE_ALLEYES) { look = s_people[0].head; }
-			f32 yaw = headingTo(p.pos, look) + (rand01() - 0.5f) * 2.0f * c_sfTurnSmall;
-			if (!p.bomber && !crowded && rare == RARE_NONE && randInt(100) < c_sfTurnChance)
-			{
-				const f32 turn = c_sfTurnMin + rand01() * (c_sfTurnMax - c_sfTurnMin);
-				yaw += chance(2) ? turn : -turn;
-			}
-			s32 kind = (groupKind >= 0) ? groupKind : randomPoseKind();
-			if (crowded) { kind = POSE_IDLE; }
-			if (p.bomber) { kind = chance(2) ? POSE_ATTACK : POSE_ANGER; }
-			s32 anim = -1, frame = 0;
-			if (!pickPose(p.obj, kind, &anim, &frame)) { anim = -1; }
-			pc_setPose(p.obj, yaw, anim, frame);
-		}
-		// The player: turned to the camera, a little away from the phone's side
-		const f32 toCam = headingTo(s_people[0].pos, s_sfCam);
-		s_figureYaw = toCam + c_pi + (s_phoneLeft ? -c_sfPhoneTurn : c_sfPhoneTurn) + (rand01() - 0.5f) * 2.0f * c_sfTurnSmall;
-		// (no one is over the player's face: those who would be were left
-		// out as the camera was placed, and a sprite's pose doesn't move it)
-		hideInFront();
-	}
-
-	static void findPeople()
-	{
-		s_peopleCount = 0;
-		Person& me = s_people[s_peopleCount++];
-		memset(&me, 0, sizeof(me));
-		me.obj = nullptr;
-		me.player = true;
-		me.pos = fromFixed(s_playerObject->posWS);
-		me.head = me.pos + up(c_figureHeight * 0.92f);	// (the figure's face)
-		me.mid = me.pos + up(c_figureHeight * 0.52f);
-		me.height = c_figureHeight;
-		me.headR = 0.8f;
-		me.bodyR = 1.6f;
-
-		struct Found { SecObject* obj; f32 dist; };
-		static Found found[512];
-		s32 foundCount = 0;
-		const V3 pl = me.pos;
-		forEachObject([&](SecObject* obj)
-		{
-			if (foundCount >= 512 || objKind(obj) != KIND_ENEMY) { return; }
-			const f32 d = len(fromFixed(obj->posWS) - pl);
-			if (d > c_sfBombRange) { return; }
-			found[foundCount].obj = obj;
-			found[foundCount].dist = d;
-			foundCount++;
-		});
-		for (s32 i = 1; i < foundCount; i++)
-		{
-			const Found f = found[i];
-			s32 j = i;
-			for (; j > 0 && found[j - 1].dist > f.dist; j--) { found[j] = found[j - 1]; }
-			found[j] = f;
-		}
-		s_blockerCount = 0;
-		for (s32 i = 0; i < foundCount && s_blockerCount < c_sfMaxBlockers; i++)
-		{
-			Blocker& b = s_blockers[s_blockerCount++];
-			const Measure m = measure(found[i].obj);
-			b.obj = found[i].obj; b.head = m.head; b.mid = m.mid; b.headR = m.headR; b.bodyR = m.bodyR;
-		}
-		bool wantBomber = !s_sfKyle && chance(c_sfBombChance);	// (with Kyle's portrait: the photobomb mood instead)
-		for (s32 i = 0; i < foundCount && s_peopleCount < c_sfMaxPersons; i++)
-		{
-			const bool near = found[i].dist <= c_sfRange && s_peopleCount <= s_maxPeople;
-			if (!near && !wantBomber) { continue; }
-			Person& p = s_people[s_peopleCount];
-			const Measure m = measure(found[i].obj);
-			p.obj = found[i].obj;
-			p.player = false;
-			p.dist = found[i].dist;
-			p.pos = fromFixed(found[i].obj->posWS);
-			p.head = m.head; p.mid = m.mid; p.height = m.height; p.headR = m.headR; p.bodyR = m.bodyR;
-			p.inFrame = false;
-			// (in the player's sight)
-			if (!clearLine(s_eye, s_eyeSector, p.head, p.headR) && !clearLine(s_eye, s_eyeSector, p.mid, p.bodyR)) { continue; }
-			p.bomber = !near;
-			if (!near) { wantBomber = false; }
-			s_peopleCount++;
-		}
-	}
-
-	//////////////////////////////////////////////////////////////////
-	// Selfies with Kyle's portrait: Kyle holds the phone (he is the picture
-	// close to the lens, the camera an arm or a stick's length from his
-	// eyes), the enemies behind him, in the frame at a size that reads,
-	// facing the lens, nobody nearer it than he is. Each photo has a mood, a
-	// place for Kyle and a camera of its own, each different from the last.
-	//////////////////////////////////////////////////////////////////
-	enum { MOOD_POSING = 0, MOOD_PHOTOBOMB, MOOD_FIREFIGHT, MOOD_GROUP, MOOD_CHAOS, MOODS };
-	enum { KYLE_SIDE = 0, KYLE_LOW, KYLE_HALF, KYLE_PEEK, KYLE_PLACES };
-	enum { CAM_EYE = 0, CAM_HIGH, CAM_LOW, CAM_STYLES };
-	enum { ARM_NEAR = 0, ARM_MID, ARM_STICK, ARMS };
-	static const s32 c_moodWeights[MOODS] = { 30, 20, 20, 15, 15 };
-	static const s32 c_placeWeights[KYLE_PLACES] = { 40, 20, 25, 15 };
-	static const s32 c_styleWeights[CAM_STYLES] = { 55, 25, 20 };
-	static const s32 c_armWeights[ARMS] = { 30, 45, 25 };
-	// Nothing but Kyle nearer the lens than this (enemies, shots, blasts)
-	static const f32 c_kyleNear = 6.0f;
-	// The camera tips up or down at most this much (the two renderers tip
-	// differently: the classic one shears, the GPU one turns; this little,
-	// both frame alike)
-	static const f32 c_kylePitchMax = degToRad(12.0f);
-	// (the cutscene art's pixels are shown 1.2 times as tall as wide)
-	static const f32 c_artPixelAspect = 1.2f;
-
-	static s32 s_sfMood = -1, s_sfPlace = -1, s_sfStyle = -1, s_sfArm = -1, s_sfShot = 0;
-	static SecObject* s_sfBomber = nullptr;
-	static f32 s_sfArmDist = 2.5f;
-	// (the photos so far in this selfie: each new one somewhere else)
-	static const s32 c_sfShotsKept = 8;
-	static V3 s_sfUsedCams[c_sfShotsKept];
-	static f32 s_sfUsedYaws[c_sfShotsKept];
-	static s32 s_sfUsedCount = 0, s_sfMoodBefore = -1;
-
-	// A choice at random by weight, but not `notThis` (the last photo's)
-	static s32 pickWeighted(const s32* weights, s32 n, s32 notThis)
-	{
-		s32 total = 0;
-		for (s32 i = 0; i < n; i++) { if (i != notThis) { total += weights[i]; } }
-		s32 r = randInt(max(total, 1));
-		for (s32 i = 0; i < n; i++)
-		{
-			if (i == notThis) { continue; }
-			if (r < weights[i]) { return i; }
-			r -= weights[i];
-		}
-		return 0;
-	}
-
-	// The frame's width over its height as it is shown
-	static f32 displayAspect()
-	{
-		if (TFE_Settings::getGraphicsSettings()->rendererIndex != 0)
-		{
-			DisplayInfo info;
-			TFE_RenderBackend::getDisplayInfo(&info);
-			if (info.width && info.height) { return f32(info.width) / f32(info.height); }
-		}
-		u32 w = 0, h = 0;
-		vfb_getResolution(&w, &h);
-		if (!w || !h) { return 2.0f; }
-		// (the classic renderer's 200 and 400 line frames have tall pixels)
-		return f32(w) / f32(h) / ((h == 200 || h == 400) ? c_artPixelAspect : 1.0f);
-	}
-
-	// Which picture of Kyle and where. He faces the camera (the arms-crossed
-	// bust); its straight edges, where the drawing cuts through him, are
-	// always past the frame's edges: the bottom below it, the side his body
-	// runs off past the left or right edge, the other side's cut below the
-	// frame's bottom. Only the frame cuts him.
-	static void kylePlan()
-	{
-		KyleShot& shot = s_kyleShot;
-		s_sfPlace = pickWeighted(c_placeWeights, KYLE_PLACES, s_sfPlace);
-		const bool mirror = chance(2);
-		s32 talk = -1, eyes = -1;
-		static const s32 talking[] = { 3, 5, 6 };
-		if (randInt(100) < 35) { talk = talking[randInt(3)]; }
-		const s32 e = randInt(100);
-		if (e < 12) { eyes = 5; }		// (a blink)
-		else if (e < 22) { eyes = 1; }	// (a squint)
-		kyleCompose(mirror, talk, eyes, shot);
-		const KyleImage& img = shot.img;
-		const s32 cutL = sideCutRow(img, false), cutR = sideCutRow(img, true);
-		// (the side with the longer cut goes past the frame's edge)
-		const bool anchorLeft = cutL <= cutR;
-		const s32 otherCut = anchorLeft ? cutR : cutL;
-		const f32 aspect = displayAspect();
-		const f32 picAspect = f32(img.w) / (f32(img.h) * c_artPixelAspect);
-		f32 headGap = 0.0f, push = 0.0f, visible = 1.0f;
-		s32 bottomRow = otherCut - 2 - randInt(16);
-		switch (s_sfPlace)
-		{
-			case KYLE_SIDE: headGap = 0.12f + rand01() * 0.20f; push = 0.05f + rand01() * 0.25f; break;
-			case KYLE_LOW:  headGap = 0.30f + rand01() * 0.15f; push = rand01() * 0.15f; break;
-			case KYLE_HALF: headGap = 0.05f + rand01() * 0.20f; push = 0.35f + rand01() * 0.2f; break;
-			case KYLE_PEEK:
-			{
-				// (only his head over the frame's bottom, in the middle:
-				// neither side of the picture is cut that high)
-				bottomRow = min(cutL, cutR) - 2;
-				visible = 0.34f + rand01() * 0.12f;
-				headGap = 1.0f - visible;
-			} break;
-		}
-		bottomRow = clamp(bottomRow, c_kyleCrown + 30, img.h);
-		if (s_sfPlace != KYLE_PEEK) { visible = 1.0f - headGap; }
-		shot.height = visible * f32(img.h) / f32(bottomRow);
-		shot.top = headGap;
-		shot.width = shot.height * picAspect / aspect;
-		if (s_sfPlace == KYLE_PEEK)
-		{
-			const f32 cx = 0.3f + rand01() * 0.4f;
-			shot.left = cx - shot.width * 0.5f;
-		}
-		else
-		{
-			shot.left = anchorLeft ? -push * shot.width : 1.0f - shot.width + push * shot.width;
-		}
-		shot.on = true;
-		RIGDBG("kyle plan place %d mirror %d left %.2f top %.2f w %.2f h %.2f rows %d talk %d eyes %d\n", s_sfPlace, mirror ? 1 : 0,
-			shot.left, shot.top, shot.width, shot.height, bottomRow, talk, eyes);
-	}
-
-	// Whether a point of the frame (0..1 across and down) is on Kyle
-	static bool kyleAt(f32 u, f32 v)
-	{
-		const KyleShot& shot = s_kyleShot;
-		if (!shot.on || shot.width <= 0.0f || shot.height <= 0.0f) { return false; }
-		const s32 x = s32((u - shot.left) / shot.width * f32(shot.img.w)), y = s32((v - shot.top) / shot.height * f32(shot.img.h));
-		if (x < 0 || y < 0 || x >= shot.img.w || y >= shot.img.h) { return false; }
-		return shot.img.rgba[size_t(y) * shot.img.w + x] != 0;
-	}
-
-	// Whether a point of the view is over Kyle (or nearly)
-	static bool overKyle(const View& v, V3 p, f32 margin)
-	{
-		f32 x, y, z;
-		project(v, p, &x, &y, &z);
-		if (z <= 0.15f) { return false; }
-		const f32 u = (x + 1.0f) * 0.5f, vv = (1.0f - y) * 0.5f;
-		for (s32 k = 0; k < 5; k++)
-		{
-			static const f32 du[5] = { 0, -1, 1, 0, 0 }, dv[5] = { 0, 0, 0, -1, 1 };
-			if (kyleAt(u + du[k] * margin, vv + dv[k] * margin)) { return true; }
-		}
-		return false;
 	}
 
 	// How far the view reaches (lines across the frame, out to 24 units:
-	// 0 a wall right there .. 1 all open): the room behind Kyle, not a wall
+	// 0 a wall right there .. 1 all open): into the room, not at a wall
 	static f32 viewDepth(const View& v, RSector* camSec)
 	{
 		static const f32 across[5] = { -0.8f, -0.4f, 0.0f, 0.4f, 0.8f };
@@ -1835,277 +1033,427 @@ namespace TFE_DarkForces
 		return open / 5.0f;
 	}
 
-	static f32 kyleScore(const View& v, RSector* camSec)
-	{
-		f32 sc = 4.0f * viewDepth(v, camSec) - c_sfWallCost * wallByCamera(v, camSec);
-		for (s32 i = 1; i < s_peopleCount; i++)
-		{
-			const Person& p = s_people[i];
-			const bool nearPlayer = p.dist < 30.0f;
-			f32 x, y, z;
-			project(v, p.head, &x, &y, &z);
-			const bool inFrame = z > 0.15f && fabsf(x) <= c_sfFitX && y <= c_sfFitUp && y >= -c_sfFitDown;
-			if (!inFrame) { if (nearPlayer) { sc -= 2.5f; } continue; }
-			if (len(p.mid - v.pos) < c_kyleNear || inFront(v.pos, p.mid, p.bodyR)) { sc -= 3.0f; continue; }	// (too near: left out)
-			if (overKyle(v, p.head, 0.03f)) { sc -= nearPlayer ? 2.0f : 0.5f; continue; }
-			if (!faceClear(v.pos, camSec, i)) { if (nearPlayer) { sc -= 1.5f; } continue; }
-			// (big enough to make out, not filling the photo)
-			const f32 size = p.height / (z * 2.0f * v.tanY);
-			const f32 readable = (size >= 0.16f) ? (size <= 0.7f ? 1.0f : 0.6f) : maxf(size / 0.16f, 0.2f);
-			sc += 1.4f * readable / (1.0f + 0.08f * f32(i - 1));
-		}
-		// (where Kyle really stands about where he is drawn)
-		f32 x, y, z;
-		project(v, s_eye, &x, &y, &z);
-		f32 u0, v0, u1, v1;
-		kyleRectFrac(s_kyleShot, &u0, &v0, &u1, &v1);
-		if (z > 0.15f) { sc += 0.4f * (1.0f - minf(fabsf((x + 1.0f) * 0.5f - (u0 + u1) * 0.5f), 1.0f)); }
-		return sc;
-	}
-
-	// What the camera looks at: the people about Kyle's own level (not
-	// those on a walkway far above), the nearer counting for more, a little
-	// below their heads
-	static bool kyleAim(V3* at)
+	// The middle of the group: the nearest heads, the nearer counting more
+	// (only those about the player's level, not on a walkway far above)
+	static bool groupMiddle(V3* at)
 	{
 		V3 v = v3(0, 0, 0);
 		f32 w = 0.0f;
-		for (s32 i = 1; i < s_peopleCount; i++)
+		for (s32 i = 0; i < s_peopleCount && i < 10; i++)
 		{
 			const Person& p = s_people[i];
-			if (fabsf(p.head.y - s_eye.y) > 7.0f || p.dist > 60.0f) { continue; }
-			const f32 wi = 1.0f / (1.0f + 0.25f * f32(i - 1));
+			if (fabsf(p.head.y - s_eye.y) > 7.0f) { continue; }
+			const f32 wi = 1.0f / (1.0f + 0.3f * f32(i));
 			v = v + p.head * wi;
 			w += wi;
 		}
 		if (w <= 0.0f) { return false; }
-		*at = v * (1.0f / w) + up(-1.5f);
+		*at = v * (1.0f / w);
 		return true;
 	}
 
-	static void finishView(View& v)
+	// How good a group photo from here is: the people near the player in it
+	// at a size that reads (more of them better), faces clear, none too near
+	// the lens, a view into the room
+	static f32 groupScore(const View& v, RSector* camSec)
 	{
-		v.tanP = tanf(v.pitch);
-		v.fwd = flatDir(v.yaw);
-		v.right = v3(cosf(v.yaw), 0.0f, -sinf(v.yaw));
+		f32 sc = 3.0f * viewDepth(v, camSec);
+		for (s32 i = 0; i < s_peopleCount; i++)
+		{
+			const Person& p = s_people[i];
+			const bool nearPlayer = i < 4 || p.dist < 24.0f;
+			f32 z;
+			if (!headInFrame(v, p.head, &z)) { if (nearPlayer) { sc -= 2.5f; } continue; }
+			if (len(p.mid - v.pos) < c_gpNear) { sc -= 2.5f; continue; }
+			if (!faceClear(v.pos, camSec, i)) { if (nearPlayer) { sc -= 1.2f; } continue; }
+			const f32 size = p.height / (z * 2.0f * v.tanY);
+			const f32 readable = (size >= 0.18f) ? (size <= 0.75f ? 1.0f : 0.6f) : maxf(size / 0.18f, 0.15f);
+			sc += 1.5f * readable / (1.0f + 0.06f * f32(i));
+		}
+		return sc;
 	}
 
-	// The camera, as if Kyle holds the phone: an arm (or a stick) out from
-	// his eyes, at eye height, held up a little or low looking up a little
-	static bool placeKyleCamera()
+	// The camera: where the player stands (held out a little, back a step,
+	// to the side, or raised), turned to the group
+	static bool placeGroupCamera()
 	{
+		V3 mid;
+		if (!groupMiddle(&mid)) { mid = s_people[0].head; }
 		const V3 eye = s_eye;
-		V3 group = v3(0, 0, 0);
-		f32 wg = 0.0f;
-		for (s32 i = 1; i < s_peopleCount && i <= 8; i++) { group = group + s_people[i].head; wg += 1.0f; }
-		V3 away = eye - (wg > 0.0f ? group * (1.0f / wg) : eye);
-		away.y = 0.0f;
-		const f32 awayYaw = (lenXZ(away) > 1.6f) ? atan2f(away.x, away.z) : s_lookYaw + c_pi * (chance(2) ? 1.0f : 0.0f);
-		f32 tanX, tanY;
-		viewTans(&tanX, &tanY);
-		f32 kx0, ky0, kx1, ky1;
-		kyleRectFrac(s_kyleShot, &kx0, &ky0, &kx1, &ky1);
-		const f32 kyleX = clampf((kx0 + kx1) - 1.0f, -0.9f, 0.9f);	// (his middle, -1..1 across)
-		static const f32 arms[ARMS][3] = { { 2.0f, 2.6f, 3.2f }, { 3.6f, 4.4f, 5.2f }, { 6.0f, 7.0f, 8.0f } };
+		const f32 toGroup = headingTo(eye, mid);
+		const V3 fwd = flatDir(toGroup), right = v3(cosf(toGroup), 0.0f, -sinf(toGroup));
+		static const f32 backs[] = { -3.0f, -1.5f, 0.0f, 1.0f };
+		static const f32 sides[] = { -2.0f, 0.0f, 2.0f };
 		struct Cand { V3 cam; RSector* sec; f32 yaw, pitch, score; };
 		Cand best = { eye, nullptr, 0, 0, -1e9f };
-		const f32 jitter = 0.6f;
-		// (this photo's style, else at eye height, any length of arm)
-		for (s32 tryStyle = 0; tryStyle < 1 + ARMS && !best.sec; tryStyle++)
+		for (s32 attempt = 0; attempt < 2 && !best.sec; attempt++)
 		{
-			const s32 style = tryStyle ? CAM_EYE : s_sfStyle;
-			const s32 arm = tryStyle ? tryStyle - 1 : s_sfArm;
-			for (s32 k = 0; k < c_sfDirs; k++)
+			const s32 style = attempt ? CAM_EYE : s_gpStyle;
+			for (f32 b : backs) for (f32 sd : sides) for (s32 t = 0; t < 2; t++)
 			{
-				const f32 yaw0 = awayYaw + f32(k) * (2.0f * c_pi / f32(c_sfDirs)) * (k & 1 ? -0.5f : 0.5f);
-				const V3 dir = flatDir(yaw0);
-				for (s32 d = 0; d < 3; d++)
+				f32 lift = 0.3f;
+				if (style == CAM_RAISED) { lift = 1.4f + f32(t) * 1.0f; }
+				if (style == CAM_LOW) { lift = -1.0f - f32(t) * 0.4f; }
+				const V3 cam = eye + fwd * b + right * sd + up(lift);
+				RSector* camSec = nullptr;
+				if (!roomAt(eye, s_eyeSector, cam, 0.6f, &camSec)) { continue; }
+				for (s32 a = -1; a <= 1; a++)
 				{
-					f32 lift = 0.3f;
-					if (style == CAM_HIGH) { lift = 1.3f + f32(d) * 0.3f; }
-					if (style == CAM_LOW) { lift = -1.1f - f32(d) * 0.2f; }
-					const V3 cam = eye + dir * arms[arm][d] + up(lift);
-					RSector* camSec = nullptr;
-					if (!roomAt(eye, s_eyeSector, cam, 0.6f, &camSec)) { continue; }
-					// (alone: whichever way shows the most of the room)
-					V3 groupAt;
-					const bool hasGroup = kyleAim(&groupAt);
-					for (s32 t = 0; t < (hasGroup ? 3 : 6); t++)
+					const f32 yaw = headingTo(cam, mid) + f32(a) * degToRad(9.0f);
+					const V3 d = mid + up(-1.2f) - cam;
+					f32 pitch = atan2f(-d.y, maxf(lenXZ(d), 0.1f));
+					if (style == CAM_LOW) { pitch += degToRad(3.0f); }
+					pitch = clampf(pitch, -c_gpPitchMax, c_gpPitchMax);
+					const View v = viewAt(cam, yaw, pitch);
+					f32 sc = groupScore(v, camSec) - 4.0f * (1.0f - viewDepth(v, camSec)) + rand01() * 0.7f;
+					for (s32 u = 0; u < s_gpUsedCount; u++)
 					{
-						V3 at = groupAt;
-						f32 blend = f32(t) * 0.3f;
-						if (!hasGroup)
-						{
-							at = cam + flatDir(headingTo(cam, eye) + f32(t) * (2.0f * c_pi / 6.0f)) * 12.0f + up(lift * 0.3f);
-							blend = 0.0f;
-						}
-						const f32 yawAt = headingTo(cam, at);
-						const f32 yawKyle = headingTo(cam, eye) - atanf(kyleX * tanX);
-						View v;
-						makeView(v, cam, at, 0.0f);
-						v.yaw = yawAt + wrapAngle(yawKyle - yawAt) * blend;
-						f32 lo = -c_kylePitchMax, hi = c_kylePitchMax;
-						if (style == CAM_LOW) { lo = degToRad(-4.0f); v.pitch += degToRad(3.0f); }
-						if (style == CAM_HIGH) { hi = degToRad(4.0f); v.pitch -= degToRad(3.0f); }
-						v.pitch = clampf(v.pitch, lo, hi);
-						finishView(v);
-						f32 sc = kyleScore(v, camSec) + rand01() * jitter;
-						for (s32 u = 0; u < s_sfUsedCount; u++)
-						{
-							// (not the same picture as an earlier photo)
-							const f32 nearBy = 1.0f - minf(len(cam - s_sfUsedCams[u]) / 4.0f, 1.0f);
-							const f32 same = 1.0f - minf(fabsf(wrapAngle(v.yaw - s_sfUsedYaws[u])) / degToRad(40.0f), 1.0f);
-							sc -= 3.0f * nearBy * same + 1.0f * nearBy;
-						}
-						if (sc > best.score) { best = { cam, camSec, v.yaw, v.pitch, sc }; }
+						// (not the same picture as an earlier photo)
+						const f32 nearBy = 1.0f - minf(len(cam - s_gpUsedCams[u]) / 3.0f, 1.0f);
+						const f32 same = 1.0f - minf(fabsf(wrapAngle(yaw - s_gpUsedYaws[u])) / degToRad(25.0f), 1.0f);
+						sc -= 2.5f * nearBy * same;
 					}
+					if (sc > best.score) { best = { cam, camSec, yaw, pitch, sc }; }
 				}
 			}
 		}
-		if (!best.sec) { return false; }
-		s_sfCam = best.cam;
-		s_sfCamSector = best.sec;
-		s_sfArmDist = len(best.cam - eye);
-		if (s_sfUsedCount < c_sfShotsKept)
+		if (!best.sec)
 		{
-			s_sfUsedCams[s_sfUsedCount] = best.cam;
-			s_sfUsedYaws[s_sfUsedCount] = best.yaw;
-			s_sfUsedCount++;
+			// (crowded in on every side: from the player's own eyes, turned to them)
+			best = { eye, s_eyeSector, headingTo(eye, mid), 0.0f, 0.0f };
+			const V3 d = mid + up(-1.2f) - eye;
+			best.pitch = clampf(atan2f(-d.y, maxf(lenXZ(d), 0.1f)), -c_gpPitchMax, c_gpPitchMax);
 		}
-		pc_place(best.cam, best.yaw, best.pitch, best.sec);
-		RIGDBG("kyle cam %.2f %.2f %.2f yaw %.0f pitch %.0f score %.2f style %d arm %d place %d\n", best.cam.x, best.cam.y, best.cam.z,
-			best.yaw * 180.0f / c_pi, best.pitch * 180.0f / c_pi, best.score, s_sfStyle, s_sfArm, s_sfPlace);
+		if (s_gpUsedCount < c_gpShotsKept)
+		{
+			s_gpUsedCams[s_gpUsedCount] = best.cam;
+			s_gpUsedYaws[s_gpUsedCount] = best.yaw;
+			s_gpUsedCount++;
+		}
+		const f32 tilt = chance(4) ? (rand01() - 0.5f) * degToRad(6.0f) : 0.0f;
+		pc_place(best.cam, best.yaw, clampf(best.pitch + tilt, -c_gpPitchMax, c_gpPitchMax), best.sec);
+		RIGDBG("group cam %.2f %.2f %.2f yaw %.0f pitch %.0f score %.2f style %d\n", best.cam.x, best.cam.y, best.cam.z,
+			best.yaw * 180.0f / c_pi, best.pitch * 180.0f / c_pi, best.score, s_gpStyle);
 		return true;
 	}
 
-	static View currentView()
-	{
-		View v;
-		v.pos = s_camPos;
-		v.yaw = s_camYaw;
-		v.pitch = s_camPitch;
-		viewTans(&v.tanX, &v.tanY);
-		v.gpu = TFE_Settings::getGraphicsSettings()->rendererIndex != 0;
-		finishView(v);
-		return v;
-	}
-
-	// The frame of an animation that fires (the last of an attack), or any
-	static bool pickFrame(SecObject* obj, s32 action, bool last, s32* anim, s32* frame)
+	// ---- poses
+	// A frame of one of the sprite's own animations for an action: any one
+	// of it, or (last) the frame an attack fires on; -1: it has none
+	static bool pickAction(SecObject* obj, s32 action, s32 frameWanted, s32* anim, s32* frame)
 	{
 		const s32 a = waxAnimFor(obj, action);
 		if (a < 0) { return false; }
 		const WaxAnim* w = WAX_AnimPtr(obj->wax, a);
 		*anim = a;
-		*frame = last ? w->frameCount - 1 : randInt(w->frameCount);
+		*frame = (frameWanted == -2) ? w->frameCount - 1 : (frameWanted >= 0 ? min(frameWanted, w->frameCount - 1) : randInt(w->frameCount));
 		return true;
 	}
 
-	// The photobomber: brought up beside Kyle in the frame (no nearer the
-	// lens than he is), leaning in (only while drawn, as every pose)
-	static bool placeBomber(const View& v)
+	static bool pickPose(SecObject* obj, s32 kind, s32* anim, s32* frame)
 	{
-		s_sfBomber = nullptr;
-		f32 u0, v0, u1, v1;
-		kyleRectFrac(s_kyleShot, &u0, &v0, &u1, &v1);
-		const bool kyleLeft = (u0 + u1) < 1.0f;
-		// (the nearest posable one, left out for being too near or not)
-		s32 who = -1;
-		for (s32 i = 1; i < s_peopleCount && who < 0; i++)
+		static const s32 order[POSE_KINDS][5] =
 		{
-			if (objValid(s_people[i].obj) && waxAnimFor(s_people[i].obj, ANIM_IDLE) >= 0) { who = i; }
-		}
-		if (who < 0) { return false; }
-		static const f32 depths[] = { 6.5f, 7.5f, 8.5f };
-		for (f32 depth : depths)
+			{ ANIM_ATTACK1, ANIM_ATTACK2, ANIM_ATTACK1_END, ANIM_IDLE, ANIM_MOVE },
+			{ ANIM_ATTACK2, ANIM_ATTACK1_END, ANIM_ATTACK1, ANIM_IDLE, ANIM_MOVE },
+			{ ANIM_IDLE, ANIM_MOVE, ANIM_ATTACK1, -1, -1 },
+			{ ANIM_PAIN, ANIM_IDLE, ANIM_MOVE, -1, -1 },
+			{ ANIM_MOVE, ANIM_IDLE, ANIM_ATTACK1, -1, -1 },
+		};
+		for (s32 i = 0; i < 5; i++)
 		{
-			for (s32 side = 0; side < 2; side++)
-			{
-				// beside him towards the middle (else the other side)
-				const bool right = (side == 0) ? kyleLeft : !kyleLeft;
-				f32 u = right ? u1 + 0.07f : u0 - 0.07f;
-				u = clampf(u, 0.12f, 0.88f);
-				const f32 fx = u * 2.0f - 1.0f;
-				const V3 at = v.pos + v.fwd * depth + v.right * (fx * v.tanX * depth);
-				RSector* sec = nullptr;
-				if (walkLine(v.pos, s_sfCamSector, at, 0.4f, &sec) < len(at - v.pos) - 0.01f || !sec) { continue; }
-				const V3 feet = v3(at.x, fixed16ToFloat(sec->floorHeight), at.z);
-				const f32 h = s_people[who].height;
-				if (feet.y - h < fixed16ToFloat(sec->ceilingHeight) + 0.2f) { continue; }
-				if (fabsf(feet.y - fromFixed(s_playerObject->posWS).y) > 4.0f) { continue; }
-				Person& p = s_people[who];
-				s32 anim = -1, frame = 0;
-				const s32 kind = chance(2) ? POSE_ATTACK : (chance(2) ? POSE_ANGER : POSE_IDLE);
-				if (!pickPose(p.obj, kind, &anim, &frame)) { continue; }
-				const f32 lean = (rand01() - 0.5f) * degToRad(30.0f);
-				pc_unhide(p.obj);
-				pc_setPose(p.obj, headingTo(feet, v.pos) + lean, anim, frame);
-				pc_movePose(p.obj, feet, sec);
-				p.inFrame = true;
-				s_sfBomber = p.obj;
-				RIGDBG("bomber %d at %.1f %.1f %.1f depth %.1f\n", who, feet.x, feet.y, feet.z, depth);
-				return true;
-			}
+			const s32 action = order[kind][i];
+			if (action < 0) { break; }
+			if (pickAction(obj, action, action == ANIM_IDLE ? 0 : -1, anim, frame)) { return true; }
 		}
 		return false;
 	}
 
-	// Everyone in the photo, as this photo's mood has them, facing the lens
-	static void kylePoseMood(const View& v)
+	static f32 sideways() { return (chance(2) ? 1.0f : -1.0f) * degToRad(70.0f + rand01() * 30.0f); }
+
+	// Someone having fun: blasters fired off to the side (never at the lens),
+	// a flinch that reads as a laugh or a dance, a leap in mid-stride, or
+	// just standing about grinning
+	static void partyPose(const View& v, const Person& p)
 	{
-		for (s32 i = 1; i < s_peopleCount; i++)
+		f32 yaw = headingTo(p.pos, v.pos);
+		s32 anim = -1, frame = 0;
+		const s32 r = randInt(100);
+		if (r < 32)
+		{
+			// (a side view: the gun points away)
+			yaw += sideways();
+			if (!pickAction(p.obj, chance(3) ? ANIM_ATTACK2 : ANIM_ATTACK1, chance(2) ? -2 : -1, &anim, &frame)) { pickPose(p.obj, POSE_IDLE, &anim, &frame); }
+		}
+		else if (r < 58)
+		{
+			yaw += (rand01() - 0.5f) * degToRad(30.0f);
+			if (!pickAction(p.obj, ANIM_PAIN, -1, &anim, &frame)) { pickPose(p.obj, POSE_IDLE, &anim, &frame); }
+		}
+		else if (r < 82)
+		{
+			yaw += (rand01() - 0.5f) * degToRad(70.0f);
+			if (!pickAction(p.obj, ANIM_MOVE, -1, &anim, &frame)) { pickPose(p.obj, POSE_IDLE, &anim, &frame); }
+		}
+		else
+		{
+			yaw += (rand01() - 0.5f) * degToRad(12.0f);
+			pickPose(p.obj, POSE_IDLE, &anim, &frame);
+		}
+		pc_setPose(p.obj, yaw, anim, frame);
+	}
+
+	static void standPose(const View& v, const Person& p, f32 turn)
+	{
+		s32 anim = -1, frame = 0;
+		if (!pickPose(p.obj, POSE_IDLE, &anim, &frame)) { anim = -1; }
+		pc_setPose(p.obj, headingTo(p.pos, v.pos) + turn, anim, frame);
+	}
+
+	// A place on the floor at this point of the frame (-1..1 across) and
+	// distance, the camera's line to it clear: its feet and sector
+	static bool floorSpot(const View& v, f32 fx, f32 depth, f32 height, V3* feet, RSector** sec)
+	{
+		const V3 at = pointAt(v, fx, depth);
+		RSector* s = nullptr;
+		if (walkLine(v.pos, s_camSector, at, 0.4f, &s) < len(at - v.pos) - 0.01f || !s) { return false; }
+		*feet = v3(at.x, fixed16ToFloat(s->floorHeight), at.z);
+		if (feet->y - height < fixed16ToFloat(s->ceilingHeight) + 0.3f) { return false; }
+		if (fabsf(feet->y - fromFixed(s_playerObject->posWS).y) > 4.0f) { return false; }
+		*sec = s;
+		return true;
+	}
+
+	static void movePerson(Person& p, V3 feet, RSector* sec)
+	{
+		pc_movePose(p.obj, feet, sec);
+		p.pos = feet;
+		p.head = feet + up(p.height * 0.85f);
+		p.mid = feet + up(p.height * 0.5f);
+	}
+
+	// The people in the photo (and the posable ones among them), the
+	// nearest first; how far the group stands
+	static s32 inFramePeople(const View& v, s32* list, s32 maxCount, f32* groupDepth)
+	{
+		s32 n = 0;
+		f32 depthSum = 0.0f;
+		for (s32 i = 0; i < s_peopleCount && n < maxCount; i++)
 		{
 			Person& p = s_people[i];
-			// (anyone with a part of them in the photo poses)
-			f32 hx, hy, hz, mx, my, mz;
-			project(v, p.head, &hx, &hy, &hz);
-			project(v, p.mid, &mx, &my, &mz);
-			const bool headIn = hz > 0.15f && fabsf(hx) < 1.15f && fabsf(hy) < 1.2f;
-			const bool midIn = mz > 0.15f && fabsf(mx) < 1.15f && fabsf(my) < 1.2f;
-			p.inFrame = (headIn || midIn) && !pc_isHidden(p.obj);
-			if (!p.inFrame || !objValid(p.obj)) { continue; }
-			f32 yaw = headingTo(p.pos, v.pos);
-			s32 anim = -1, frame = 0;
-			switch (s_sfMood)
+			f32 z;
+			p.inFrame = headInFrame(v, p.head, &z) || headInFrame(v, p.mid, &z);
+			if (!p.inFrame || pc_isHidden(p.obj) || !objValid(p.obj)) { p.inFrame = false; continue; }
+			list[n++] = i;
+			depthSum += z;
+		}
+		*groupDepth = n ? depthSum / f32(n) : 10.0f;
+		return n;
+	}
+
+	// ---- added for the photo: fireworks (the game's own blasts and bolts)
+
+	// Fireworks: the game's own blasts and bolts, added behind the group and
+	// over their heads (the blasts' bottoms above the tallest head)
+	static void addFirework(const View& v, f32 groupDepth, f32 topY)
+	{
+		// (named as the game loads them for its own blasts and shots, so these
+		// are the very ones it has, ready for either renderer)
+		static const char* blasts[] = { "genexp.wax", "detexp.wax", "missexp.wax", "mortexp.wax", "exptiny.wax", "plasexp.wax" };
+		const s32 count = 3 + randInt(4);
+		for (s32 k = 0, tries = 0; k < count && s_extraCount < c_maxExtras && tries < 24; tries++)
+		{
+			const bool bolt = (tries & 1) && chance(2);
+			const f32 depth = groupDepth + (bolt ? 2.0f + rand01() * 6.0f : 5.0f + rand01() * 10.0f);
+			V3 at = pointAt(v, (rand01() * 2.0f - 1.0f) * 0.85f, depth);
+			Extra& e = s_extras[s_extraCount];
+			memset(&e.obj, 0, sizeof(e.obj));
+			e.obj.self = &e.obj;
+			e.obj.worldWidth = e.obj.worldHeight = -1;
+			f32 bottom;
+			if (bolt)
 			{
-				case MOOD_GROUP:
-				{
-					yaw += (rand01() - 0.5f) * degToRad(6.0f);
-					if (!pickPose(p.obj, POSE_IDLE, &anim, &frame)) { anim = -1; }
-				} break;
-				case MOOD_FIREFIGHT:
-				{
-					yaw += (rand01() - 0.5f) * degToRad(16.0f);
-					if (!pickFrame(p.obj, chance(3) ? ANIM_ATTACK2 : ANIM_ATTACK1, true, &anim, &frame) &&
-						!pickFrame(p.obj, ANIM_ATTACK1, true, &anim, &frame)) { anim = -1; }
-				} break;
-				case MOOD_CHAOS:
-				{
-					yaw += (rand01() - 0.5f) * degToRad(50.0f);
-					static const s32 actions[] = { ANIM_ATTACK1, ANIM_PAIN, ANIM_DIE1, ANIM_DIE2, ANIM_MOVE, ANIM_ATTACK2 };
-					const s32 a = actions[randInt(6)];
-					if (!pickFrame(p.obj, a, a == ANIM_ATTACK1 || a == ANIM_ATTACK2, &anim, &frame) &&
-						!pickPose(p.obj, randomPoseKind(), &anim, &frame)) { anim = -1; }
-				} break;
-				default:	// (posing, and everyone but the photobomber)
-				{
-					yaw += (rand01() - 0.5f) * 2.0f * c_sfTurnSmall;
-					if (randInt(100) < 20)
-					{
-						const f32 turn = c_sfTurnMin + rand01() * (c_sfTurnMax - c_sfTurnMin);
-						yaw += chance(2) ? turn : -turn;
-					}
-					if (!pickPose(p.obj, randomPoseKind(), &anim, &frame)) { anim = -1; }
-				} break;
+				JediModel* model = TFE_Model_Jedi::get(chance(3) ? "wgbolt.3do" : "wrbolt.3do", POOL_GAME);
+				if (!model) { continue; }
+				at.y = topY - 1.5f - rand01() * 4.0f;
+				bottom = at.y;
+				obj3d_setData(&e.obj, model);
+				e.obj.flags = OBJ_FLAG_NEEDS_TRANSFORM | OBJ_FLAG_FULLBRIGHT;
+				e.obj.yaw = toAngle14(v.yaw + sideways());
+				e.obj.pitch = toAngle14(degToRad(10.0f + rand01() * 30.0f));
+				obj3d_computeTransform(&e.obj);
+			}
+			else
+			{
+				JediWax* wax = TFE_Sprite_Jedi::getWax(blasts[randInt(6)], POOL_GAME);
+				const WaxAnim* anim = wax ? WAX_AnimPtr(wax, 0) : nullptr;
+				const WaxView* view = anim ? WAX_ViewPtr(wax, anim, 0) : nullptr;
+				if (!view || anim->frameCount <= 0) { continue; }
+				const s32 f = randInt(anim->frameCount);
+				const WaxFrame* frame = WAX_FramePtr(wax, view, f);
+				if (!frame) { continue; }
+				// (drawn from its point up by its offset: its bottom over the heads)
+				const f32 offsetY = fixed16ToFloat(frame->offsetY);
+				at.y = topY - 1.0f - rand01() * 3.0f - offsetY;
+				bottom = at.y + offsetY;
+				e.obj.wax = wax;
+				e.obj.type = OBJ_TYPE_SPRITE;
+				e.obj.flags = OBJ_FLAG_NEEDS_TRANSFORM | OBJ_FLAG_FULLBRIGHT;
+				e.obj.worldWidth = 0;
+				e.obj.anim = 0;
+				e.obj.frame = f;
+			}
+			RSector* sec = nullptr;
+			const V3 low = v3(at.x, maxf(at.y, bottom), at.z);
+			if (walkLine(v.pos, s_camSector, v3(low.x, v.pos.y, low.z), 0.3f, &sec) < lenXZ(low - v.pos) - 0.01f || !sec) { continue; }
+			// (under the ceiling there, some of it, and in the frame)
+			if (bottom < fixed16ToFloat(sec->ceilingHeight) + 2.0f) { continue; }
+			f32 x, y, z;
+			project(v, low, &x, &y, &z);
+			if (z < 1.0f || fabsf(x) > 1.0f || y > 1.0f || y < -0.6f) { continue; }
+			e.obj.posWS = { floatToFixed16(at.x), floatToFixed16(at.y), floatToFixed16(at.z) };
+			e.sector = sec;
+			s_extraCount++;
+			k++;
+			RIGDBG("firework %s at %.1f %.1f %.1f sector %d\n", bolt ? "bolt" : "blast", at.x, at.y, at.z, sec->id);
+		}
+	}
+
+	// ---- the themes
+	static void themeParty(const View& v, const s32* list, s32 n)
+	{
+		for (s32 k = 0; k < n; k++) { partyPose(v, s_people[list[k]]); }
+	}
+
+	// A class photo: a tidy line across the frame, everyone standing,
+	// facing the lens
+	static void themeClass(const View& v, const s32* list, s32 n, f32 groupDepth)
+	{
+		const s32 count = min(n, 7);
+		const f32 depth = clampf(groupDepth, 8.0f, 14.0f);
+		for (s32 k = 0; k < n; k++)
+		{
+			Person& p = s_people[list[k]];
+			if (k < count)
+			{
+				const f32 fx = (count == 1) ? 0.0f : -0.62f + 1.24f * f32(k) / f32(count - 1);
+				V3 feet;
+				RSector* sec;
+				if (floorSpot(v, fx, depth + (k & 1) * 0.6f, p.height, &feet, &sec)) { movePerson(p, feet, sec); }
+			}
+			standPose(v, p, (rand01() - 0.5f) * degToRad(4.0f));
+		}
+	}
+
+	// A conga: everyone the same way, mid-stride, in a line across
+	static void themeConga(const View& v, const s32* list, s32 n, f32 groupDepth)
+	{
+		const s32 count = min(n, 7);
+		const f32 depth = clampf(groupDepth, 8.0f, 14.0f);
+		const f32 dir = chance(2) ? 1.0f : -1.0f;
+		const f32 yaw = v.yaw + c_pi + dir * degToRad(80.0f);	// (side on, all one way)
+		for (s32 k = 0; k < n; k++)
+		{
+			Person& p = s_people[list[k]];
+			if (k < count)
+			{
+				const f32 fx = (count == 1) ? 0.0f : dir * (-0.6f + 1.2f * f32(k) / f32(count - 1));
+				V3 feet;
+				RSector* sec;
+				if (floorSpot(v, fx, depth + f32(k) * 0.5f, p.height, &feet, &sec)) { movePerson(p, feet, sec); }
+			}
+			s32 anim = -1, frame = 0;
+			const s32 a = waxAnimFor(p.obj, ANIM_MOVE);
+			if (a >= 0)
+			{
+				anim = a;
+				const WaxAnim* w = WAX_AnimPtr(p.obj->wax, a);
+				frame = (k * 2 + s_gpShot) % max(w->frameCount, 1);
 			}
 			pc_setPose(p.obj, yaw, anim, frame);
 		}
 	}
 
-	// Shots and blasts: none nearer the lens than Kyle, nor in front of him;
-	// kept in a firefight (behind him), else left out in front of faces
-	static void kyleHideShots(const View& v)
+	// Someone posing on the floor in front of the others (lying on a frame
+	// of their fall), the rest standing about or laughing
+	static bool themeFloor(const View& v, const s32* list, s32 n, f32 groupDepth)
 	{
+		Person& p = s_people[list[0]];
+		s32 anim = -1, frame = 0;
+		if (!pickAction(p.obj, ANIM_DEAD, 0, &anim, &frame) && !pickAction(p.obj, ANIM_DIE1, -2, &anim, &frame) &&
+			!pickAction(p.obj, ANIM_DIE2, -2, &anim, &frame)) { return false; }
+		V3 feet;
+		RSector* sec;
+		bool placed = false;
+		for (s32 t = 0; t < 6 && !placed; t++)
+		{
+			const f32 depth = maxf(groupDepth - 3.0f, c_gpNear + 1.0f) + f32(t) * 0.8f;
+			if (!floorSpot(v, (rand01() - 0.5f) * 0.5f, depth, 1.0f, &feet, &sec)) { continue; }
+			// (all of them in the photo, clear of the bottom edge)
+			f32 x, y, z;
+			project(v, feet, &x, &y, &z);
+			placed = z > 0.15f && y >= -c_gpFitDown + 0.05f;
+		}
+		if (!placed) { return false; }
+		movePerson(p, feet, sec);
+		pc_setPose(p.obj, headingTo(feet, v.pos) + sideways(), anim, frame);
+		for (s32 k = 1; k < n; k++)
+		{
+			if (chance(2)) { partyPose(v, s_people[list[k]]); }
+			else { standPose(v, s_people[list[k]], (rand01() - 0.5f) * degToRad(20.0f)); }
+		}
+		return true;
+	}
+
+	// A photobomb: one of them right up at the edge of the frame peeking in,
+	// or leaning in behind the others
+	static bool themePhotobomb(const View& v, const s32* list, s32 n, f32 groupDepth)
+	{
+		Person& p = s_people[list[0]];
+		const bool edge = n < 2 || chance(3) != 0;
+		V3 feet;
+		RSector* sec = nullptr;
+		bool placed = false;
+		const f32 side0 = chance(2) ? -1.0f : 1.0f;
+		for (s32 t = 0; t < 8 && !placed; t++)
+		{
+			const f32 side = (t & 1) ? -side0 : side0;
+			if (edge) { placed = floorSpot(v, side * (0.90f + rand01() * 0.10f), 3.6f + rand01() * 1.2f + (t >> 1) * 1.0f, p.height, &feet, &sec); }
+			else { placed = floorSpot(v, side * rand01() * 0.4f, groupDepth + 2.5f + rand01() * 1.5f, p.height, &feet, &sec); }
+			if (placed)
+			{
+				// (their face in the photo, not just a shoulder)
+				f32 x, y, z;
+				project(v, feet + up(p.height * 0.85f), &x, &y, &z);
+				placed = z > 0.15f && y <= c_gpFitUp && y >= -c_gpFitDown;
+			}
+		}
+		if (!placed) { return false; }
+		pc_unhide(p.obj);
+		movePerson(p, feet, sec);
+		s_gpBomber = p.obj;
+		s32 anim = -1, frame = 0;
+		const s32 r = randInt(3);
+		f32 yaw = headingTo(feet, v.pos);
+		if (r == 0) { pickAction(p.obj, ANIM_PAIN, -1, &anim, &frame); yaw += (rand01() - 0.5f) * degToRad(20.0f); }
+		else if (r == 1) { pickAction(p.obj, ANIM_ATTACK1, -1, &anim, &frame); yaw += sideways(); }
+		else { pickPose(p.obj, POSE_IDLE, &anim, &frame); yaw += (rand01() - 0.5f) * degToRad(40.0f); }
+		pc_setPose(p.obj, yaw, anim, frame);
+		for (s32 k = 1; k < n; k++)
+		{
+			if (chance(3)) { partyPose(v, s_people[list[k]]); }
+			else { standPose(v, s_people[list[k]], (rand01() - 0.5f) * degToRad(14.0f)); }
+		}
+		RIGDBG("photobomb %s at %.1f %.1f %.1f\n", edge ? "edge" : "behind", feet.x, feet.y, feet.z);
+		return true;
+	}
+
+	// Shots and blasts: none near the lens or in front of a face; with
+	// fireworks, those over their heads stay
+	static void groupHideShots(const View& v, f32 groupDepth)
+	{
+		f32 topY = 1e9f;
+		for (s32 i = 0; i < s_peopleCount; i++) { if (s_people[i].inFrame) { topY = minf(topY, s_people[i].head.y); } }
 		forEachObject([&](SecObject* obj)
 		{
 			const s32 kind = objKind(obj);
@@ -2113,152 +1461,178 @@ namespace TFE_DarkForces
 			const V3 pos = fromFixed(obj->posWS) + up(fixed16ToFloat(max(obj->worldHeight, 0)) * 0.5f);
 			const V3 dp = pos - v.pos;
 			const f32 fdp = len(dp);
-			if (fdp < c_kyleNear + 1.0f || dot(dp, v.fwd) < s_sfArmDist + 1.0f) { pc_hide(obj); return; }
-			// (none over Kyle)
-			if (overKyle(v, pos, 0.02f)) { pc_hide(obj); return; }
-			if (s_sfMood == MOOD_FIREFIGHT) { return; }
-			for (s32 i = 1; i < s_peopleCount; i++)
+			if (fdp < c_gpNear + 1.0f) { pc_hide(obj); return; }
+			if (s_gpTheme == THEME_FIREWORKS && pos.y < topY - 0.5f && dot(dp, v.fwd) > groupDepth - 1.0f) { return; }
+			// (none between the lens and the group, nor among them)
+			if (dot(dp, v.fwd) < groupDepth + 1.5f) { pc_hide(obj); return; }
+			for (s32 i = 0; i < s_peopleCount; i++)
 			{
 				const Person& p = s_people[i];
 				if (!p.inFrame) { continue; }
-				const V3 dh = p.head - v.pos;
+				const V3 dh = p.head - v.pos, dm = p.mid - v.pos;
 				const f32 fdh = len(dh);
-				if (fdh < 0.01f || fdp >= fdh) { continue; }
-				if (angleBetween(dp, dh) < p.headR * 1.5f / fdh + 0.03f) { pc_hide(obj); return; }
+				if (fdh < 0.01f || fdp >= fdh + 1.0f) { continue; }
+				if (angleBetween(dp, dh) < p.headR * 2.0f / fdh + 0.03f || angleBetween(dp, dm) < p.bodyR / fdh) { pc_hide(obj); return; }
 			}
 		});
 	}
 
-	// One photo: a mood, a place for Kyle, a camera, everyone posed
-	static bool kylePhoto()
+	// One photo: a camera, a theme, everyone posed
+	static bool groupPhoto()
 	{
 		s_poseCount = 0;
 		s_hiddenCount = 0;
-		s_sfBomber = nullptr;
-		const bool enemies = s_peopleCount > 1;
-		// (a mood not had in the last two photos)
-		s32 mood = MOOD_POSING;
-		if (enemies)
+		s_extraCount = 0;
+		s_gpBomber = nullptr;
+		for (s32 i = 0; i < s_peopleCount; i++)
 		{
-			for (s32 t = 0; t < 8; t++)
-			{
-				mood = pickWeighted(c_moodWeights, MOODS, s_sfMood);
-				if (mood != s_sfMoodBefore) { break; }
-			}
+			Person& p = s_people[i];
+			p.pos = p.homePos; p.head = p.homeHead; p.mid = p.homeMid;
 		}
-		s_sfMoodBefore = s_sfMood;
-		s_sfMood = mood;
-		s_sfStyle = pickWeighted(c_styleWeights, CAM_STYLES, s_sfStyle);
-		s_sfArm = pickWeighted(c_armWeights, ARMS, s_sfArm);
-		kylePlan();
-	#ifdef IOS_CAMERA_RIG_DEBUG
-		const u64 t0 = SDL_GetPerformanceCounter();
-	#endif
-		if (!placeKyleCamera()) { return false; }
-		RIGDBG("kyle camera %.1f ms\n", f64(SDL_GetPerformanceCounter() - t0) * 1000.0 / f64(SDL_GetPerformanceFrequency()));
-		const View v = currentView();
-		// everyone nearer the lens than Kyle, or between him and it, left out
-		// (the dying and the dead too)
-		for (s32 j = 0; j < s_blockerCount; j++)
-		{
-			if (len(s_blockers[j].mid - v.pos) < c_kyleNear || inFront(v.pos, s_blockers[j].mid, s_blockers[j].bodyR)) { pc_hide(s_blockers[j].obj); }
-		}
+		s_gpStyle = pickWeighted(c_styleWeights, CAM_STYLES, s_gpStyle);
+		if (!placeGroupCamera()) { return false; }
+		const View v = viewAt(s_camPos, s_camYaw, s_camPitch);
+		// nobody nearer the lens than the group (the dying and the dead too)
 		forEachObject([&](SecObject* obj)
 		{
-			if (obj == s_playerObject || obj->type != OBJ_TYPE_SPRITE || !(obj->flags & OBJ_FLAG_NEEDS_TRANSFORM)) { return; }
-			if (!(obj->entityFlags & (ETFLAG_AI_ACTOR | ETFLAG_CORPSE)) || objKind(obj) == KIND_ENEMY) { return; }
+			if (obj == s_playerObject || !(obj->flags & OBJ_FLAG_NEEDS_TRANSFORM)) { return; }
+			if (!(obj->entityFlags & (ETFLAG_AI_ACTOR | ETFLAG_CORPSE))) { return; }
 			const Measure m = measure(obj);
-			const f32 d = len(m.mid - v.pos);
-			if (d < 60.0f && (d < c_kyleNear || inFront(v.pos, m.mid, m.bodyR))) { pc_hide(obj); }
+			if (len(m.mid - v.pos) < c_gpNear) { pc_hide(obj); }
 		});
-		kylePoseMood(v);
-		if (s_sfMood == MOOD_PHOTOBOMB && !placeBomber(v)) { s_sfMood = MOOD_POSING; }
-		kyleHideShots(v);
-		s_sfShot++;
-		RIGDBG("kyle photo %d mood %d place %d style %d arm %d posed %d\n", s_sfShot, s_sfMood, s_sfPlace, s_sfStyle, s_sfArm, s_poseCount);
+		static s32 list[c_gpMaxPersons];
+		f32 groupDepth = 10.0f;
+		s32 n = inFramePeople(v, list, c_gpMaxPersons, &groupDepth);
+		// (and anyone in front of the group with their head out of the frame:
+		// only a big piece of them would be in it)
+		for (s32 i = 0; i < s_peopleCount; i++)
+		{
+			const Person& p = s_people[i];
+			if (p.inFrame) { continue; }
+			f32 x, y, z;
+			project(v, p.mid, &x, &y, &z);
+			if (z > 0.15f && z < groupDepth + 1.0f && fabsf(x) < 1.6f) { pc_hide(p.obj); }
+		}
+		// (anyone well in front of the others joins them, or stays out of it)
+		{
+			s32 kept = 0;
+			for (s32 k = 0; k < n; k++)
+			{
+				Person& p = s_people[list[k]];
+				f32 x, y, z;
+				project(v, p.mid, &x, &y, &z);
+				if (n > 1 && z < groupDepth - 3.0f)
+				{
+					V3 feet;
+					RSector* sec;
+					if (floorSpot(v, clampf(x, -0.7f, 0.7f), groupDepth - 1.0f + rand01() * 2.0f, p.height, &feet, &sec)) { movePerson(p, feet, sec); }
+					else { pc_hide(p.obj); p.inFrame = false; continue; }
+				}
+				list[kept++] = list[k];
+			}
+			n = kept;
+		}
+		// (and no bodies or things lying about in front of them)
+		forEachObject([&](SecObject* obj)
+		{
+			if (obj == s_playerObject || !(obj->flags & OBJ_FLAG_NEEDS_TRANSFORM)) { return; }
+			if (!(obj->entityFlags & (ETFLAG_CORPSE | ETFLAG_PICKUP)) || (obj->entityFlags & ETFLAG_AI_ACTOR)) { return; }
+			if (dot(fromFixed(obj->posWS) - v.pos, v.fwd) < groupDepth - 1.0f) { pc_hide(obj); }
+		});
+		// a theme they are enough for, not one of the last two
+		s32 theme = THEME_PARTY;
+		for (s32 t = 0; t < 12; t++)
+		{
+			theme = pickWeighted(c_themeWeights, THEMES, s_gpTheme);
+			if (theme != s_gpThemeBefore && n >= c_themeLeast[theme]) { break; }
+			theme = THEME_PARTY;
+		}
+	#ifdef IOS_CAMERA_RIG_DEBUG
+		if (getenv("CAMTEST_THEME")) { theme = atoi(getenv("CAMTEST_THEME")); }
+	#endif
+		s_gpThemeBefore = s_gpTheme;
+		s_gpTheme = theme;
+		f32 topY = 1e9f;
+		for (s32 k = 0; k < n; k++) { topY = minf(topY, s_people[list[k]].head.y); }
+		switch (theme)
+		{
+			case THEME_CLASS: themeClass(v, list, n, groupDepth); break;
+			case THEME_CONGA: themeConga(v, list, n, groupDepth); break;
+			case THEME_FLOOR: if (!themeFloor(v, list, n, groupDepth)) { s_gpTheme = THEME_PARTY; themeParty(v, list, n); } break;
+			case THEME_PHOTOBOMB: if (!themePhotobomb(v, list, n, groupDepth)) { s_gpTheme = THEME_PARTY; themeParty(v, list, n); } break;
+			case THEME_FIREWORKS: themeParty(v, list, n); addFirework(v, groupDepth, topY < 1e8f ? topY : s_eye.y); break;
+			default: themeParty(v, list, n); break;
+		}
+		groupHideShots(v, groupDepth);
+	#ifdef IOS_CAMERA_RIG_DEBUG
+		for (s32 k = 0; k < n; k++)
+		{
+			const Person& p = s_people[list[k]];
+			f32 x, y, z;
+			project(v, p.mid, &x, &y, &z);
+			RIGDBG("  person %d at %.1f %.1f %.1f proj %.2f %.2f %.2f hidden %d\n", k, p.pos.x, p.pos.y, p.pos.z, x, y, z, pc_isHidden(p.obj) ? 1 : 0);
+		}
+	#endif
+		s_gpShot++;
+		RIGDBG("group photo %d theme %d style %d people %d posed %d extras %d\n", s_gpShot, s_gpTheme, s_gpStyle, n, s_poseCount, s_extraCount);
 		return true;
 	}
 
-	static bool selfiePrepare()
+	// Who is about: enemies near the player, in their sight, the nearest first
+	static void findGroup()
+	{
+		struct Found { SecObject* obj; f32 dist; };
+		static Found found[512];
+		s32 foundCount = 0;
+		const V3 pl = fromFixed(s_playerObject->posWS);
+		forEachObject([&](SecObject* obj)
+		{
+			if (foundCount >= 512 || objKind(obj) != KIND_ENEMY) { return; }
+			const f32 d = len(fromFixed(obj->posWS) - pl);
+			if (d > c_gpRange) { return; }
+			found[foundCount].obj = obj;
+			found[foundCount].dist = d;
+			foundCount++;
+		});
+		for (s32 i = 1; i < foundCount; i++)
+		{
+			const Found f = found[i];
+			s32 j = i;
+			for (; j > 0 && found[j - 1].dist > f.dist; j--) { found[j] = found[j - 1]; }
+			found[j] = f;
+		}
+		s_peopleCount = 0;
+		for (s32 i = 0; i < foundCount && s_peopleCount < s_maxPeople && s_peopleCount < c_gpMaxPersons; i++)
+		{
+			const Measure m = measure(found[i].obj);
+			// (in the player's sight)
+			if (!clearLine(s_eye, s_eyeSector, m.head, m.headR) && !clearLine(s_eye, s_eyeSector, m.mid, m.bodyR)) { continue; }
+			Person& p = s_people[s_peopleCount++];
+			p.obj = found[i].obj;
+			p.dist = found[i].dist;
+			p.pos = fromFixed(found[i].obj->posWS);
+			p.head = m.head; p.mid = m.mid; p.height = m.height; p.headR = m.headR; p.bodyR = m.bodyR; p.width = m.width;
+			p.homePos = p.pos; p.homeHead = p.head; p.homeMid = p.mid;
+			p.inFrame = false;
+		}
+	}
+
+	static bool groupPrepare()
 	{
 		randSeed(u32(SDL_GetTicks()) * 2654435761u + 12345u);
 		s_flash = true;
-		s_phoneLeft = randInt(10) < 4;
-		const s32 r = randInt(100);
-		s_sfLiftNow = (r < 20) ? c_sfLiftUp : ((r < 35) ? c_sfLiftDown : c_sfLift);
-		findSolids(c_sfCamMax + 20.0f);
-		s_sfKyle = kyleLoad();
-		s_sfLensClearNow = s_sfKyle ? c_kyleNear : c_sfLensClear;
-		s_kyleShot.on = false;
-		findPeople();
-		if (s_sfKyle)
+		s_hidePlayer = true;
+		s_gpTheme = s_gpThemeBefore = s_gpStyle = -1;
+		s_gpShot = 0;
+		s_gpUsedCount = 0;
+		findSolids(c_gpRange);
+		findGroup();
+		if (s_peopleCount == 0 || !groupPhoto())
 		{
-			// Kyle's portrait by the lens: no figure, a fresh camera each photo
-			s_sfMood = s_sfPlace = s_sfStyle = s_sfArm = s_sfMoodBefore = -1;
-			s_sfShot = 0;
-			s_sfUsedCount = 0;
-			s_hidePlayer = true;
-			if (!kylePhoto())
-			{
-				s_kyleShot.on = false;
-				s_sfFailed = true;
-				return false;
-			}
-			s_sfPosed = true;
-			return true;
-		}
-		// the photobomber is only in it if they would be in the photo
-		s32 bomberIdx = -1;
-		for (s32 i = 1; i < s_peopleCount; i++) { if (s_people[i].bomber) { bomberIdx = i; } }
-		Person bomber;
-		if (bomberIdx >= 0)
-		{
-			bomber = s_people[bomberIdx];
-			for (s32 i = bomberIdx; i < s_peopleCount - 1; i++) { s_people[i] = s_people[i + 1]; }
-			s_peopleCount--;
-		}
-		if (!placeSelfieCamera())
-		{
+			s_sfNoOne = s_peopleCount == 0;
 			s_sfFailed = true;
 			return false;
 		}
-		// enemies between the camera and the player left out (posing or
-		// not); and those nearer than the player with their heads out of the
-		// frame (only a big piece of them would be in it)
-		View v;
-		makeView(v, s_sfCam, aimPoint(), 0.0f);
-		const f32 fPlayer = len(s_people[0].mid - s_sfCam);
-		for (s32 j = 0; j < s_blockerCount; j++)
-		{
-			const Blocker& b = s_blockers[j];
-			f32 x, y, z;
-			project(v, b.head, &x, &y, &z);
-			const bool headOut = z <= 0.15f || fabsf(x) > 1.0f || fabsf(y) > 1.0f;
-			if (inFront(s_sfCam, b.mid, b.bodyR) || (headOut && len(b.mid - s_sfCam) < fPlayer)) { pc_hide(b.obj); }
-		}
-		// (and the dying and the dead in front, as the living)
-		forEachObject([&](SecObject* obj)
-		{
-			if (obj == s_playerObject || obj->type != OBJ_TYPE_SPRITE || !(obj->flags & OBJ_FLAG_NEEDS_TRANSFORM)) { return; }
-			if (!(obj->entityFlags & (ETFLAG_AI_ACTOR | ETFLAG_CORPSE)) || objKind(obj) == KIND_ENEMY) { return; }
-			const Measure m = measure(obj);
-			if (len(m.mid - s_sfCam) < 60.0f && inFront(s_sfCam, m.mid, m.bodyR)) { pc_hide(obj); }
-		});
-		for (s32 i = 0; i < s_peopleCount; i++)
-		{
-			s_people[i].inFrame = i == 0 || (personInFrame(v, s_people[i]) && s_people[i].dist <= c_sfRange && !pc_isHidden(s_people[i].obj));
-		}
-		if (bomberIdx >= 0 && s_peopleCount < c_sfMaxPersons)
-		{
-			s_people[s_peopleCount] = bomber;
-			if (personInFrame(v, bomber) && !pc_isHidden(bomber.obj) && faceClear(s_sfCam, s_sfCamSector, s_peopleCount))
-			{
-				s_people[s_peopleCount].inFrame = true;
-				s_peopleCount++;
-			}
-		}
-		s_hidePlayer = false;
-		selfiePose();
 		s_sfPosed = true;
 		return true;
 	}
@@ -2748,21 +2122,6 @@ namespace TFE_DarkForces
 	//////////////////////////////////////////////////////////////////
 	// The mission's frame
 	//////////////////////////////////////////////////////////////////
-	void iosCamera_frameGrabbed()
-	{
-		// Kyle on the software renderer's screen, once the frame is read (the
-		// saved photo has him in true colour instead)
-		if (!iosCamera_photoView() || !s_kyleShot.on || TFE_Settings::getGraphicsSettings()->rendererIndex != 0) { return; }
-		u32 w = 0, h = 0;
-		vfb_getResolution(&w, &h);
-		kyleDraw8(s_kyleShot, vfb_getCpuBuffer(), s32(w), s32(h), s32(vfb_getStride()), vfb_getPalette());
-	}
-
-	void iosCamera_compositeRGBA(s32 w, s32 h, u8* rgba)
-	{
-		if (iosCamera_photoView() && s_kyleShot.on) { kyleDrawRGBA(s_kyleShot, rgba, w, h); }
-	}
-
 	bool iosCamera_photoView()
 	{
 		return s_pcActive && s_pcPrepared && !s_pcFailed;
@@ -2811,13 +2170,28 @@ using namespace TFE_DarkForces;
 
 extern "C"
 {
-	// ---------------------------------------------------------- selfies
+	// ---------------------------------------------------------- group photos
 	int IOSSelfie_Begin(void)
 	{
 		if (s_sfActive || s_pcActive) { return 0; }
-		s_sfPosed = s_sfFailed = false;
+		s_sfPosed = s_sfFailed = s_sfNoOne = false;
 		s_peopleCount = 0;
-		if (!pc_begin(selfiePrepare)) { return 0; }
+		if (!pc_begin(groupPrepare)) { return 0; }
+		// (with nobody about, no photo at all: the overlay says so)
+		bool anyone = false;
+		const V3 pl = fromFixed(s_playerObject->posWS);
+		forEachObject([&](SecObject* obj)
+		{
+			if (anyone || objKind(obj) != KIND_ENEMY || len(fromFixed(obj->posWS) - pl) > c_gpRange) { return; }
+			const Measure m = measure(obj);
+			anyone = clearLine(s_eye, s_eyeSector, m.head, m.headR) || clearLine(s_eye, s_eyeSector, m.mid, m.bodyR);
+		});
+		if (!anyone)
+		{
+			pc_end();
+			s_sfNoOne = true;
+			return 0;
+		}
 		s_sfActive = true;
 		return 1;
 	}
@@ -2826,35 +2200,38 @@ extern "C"
 	int IOSSelfie_IsPosed(void) { return (s_sfActive && s_sfPosed) ? 1 : 0; }
 	int IOSSelfie_Failed(void) { return (s_sfActive && (s_sfFailed || s_pcFailed)) ? 1 : 0; }
 
+	const char* IOSSelfie_CantMessage(void)
+	{
+		return s_sfNoOne ? "No one around for a group photo" : "Can't take a group photo here";
+	}
+
 	void IOSSelfie_Repose(void)
 	{
 		if (!s_sfActive || !s_sfPosed) { return; }
-		if (s_sfKyle)
+		// (a new photo; where no camera will do, the last one's, a new theme)
+		const V3 cam = s_camPos;
+		const f32 yaw = s_camYaw, pitch = s_camPitch;
+		RSector* sec = s_camSector;
+		if (!groupPhoto())
 		{
-			// (a new photo; where no camera will do, the last one's, with a new mood)
-			const V3 cam = s_camPos;
-			const f32 yaw = s_camYaw, pitch = s_camPitch;
-			RSector* sec = s_camSector;
-			if (!kylePhoto())
-			{
-				pc_place(cam, yaw, pitch, sec);
-				s_poseCount = 0;
-				kylePoseMood(currentView());
-			}
-			return;
+			pc_place(cam, yaw, pitch, sec);
+			s_poseCount = 0;
+			s_extraCount = 0;
+			const View v = viewAt(cam, yaw, pitch);
+			static s32 list[c_gpMaxPersons];
+			f32 depth;
+			const s32 n = inFramePeople(v, list, c_gpMaxPersons, &depth);
+			themeParty(v, list, n);
 		}
-		selfiePose();
 	}
 
 	void IOSSelfie_End(void)
 	{
 		if (!s_sfActive) { return; }
 		s_peopleCount = 0;
-		s_blockerCount = 0;
+		s_extraCount = 0;
 		s_sfPosed = s_sfFailed = false;
 		s_sfActive = false;
-		s_sfKyle = false;
-		s_kyleShot.on = false;
 		pc_end();
 	}
 
@@ -2866,7 +2243,7 @@ extern "C"
 	int IOSSelfie_NumPosed(void)
 	{
 		int ct = 0;
-		for (s32 i = 1; i < s_peopleCount; i++) { ct += s_people[i].inFrame ? 1 : 0; }
+		for (s32 i = 0; i < s_peopleCount; i++) { ct += s_people[i].inFrame ? 1 : 0; }
 		return ct;
 	}
 

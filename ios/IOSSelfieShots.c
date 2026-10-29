@@ -57,7 +57,7 @@ int IOSSelfieShots_Tick(double now)
   // camera: no selfie
   if (IOSSelfie_Failed()) {
     IOSSelfieShots_Stop();
-    IOS_ShowCameraMessage("Can't take a selfie here");
+    IOS_ShowCameraMessage(IOSSelfie_CantMessage());
     return _iState;
   }
   if (!IOSSelfie_IsPosed()) {

@@ -27,11 +27,12 @@ They own both the original Dark Forces and Nightdive's Dark Forces Remaster
   `TFE_DarkForces/iosCamera.cpp` (a photo view drawn from its own camera
   through `iosCamera_drawWorld` in `mission.cpp`, no weapon or HUD; poses,
   hiding and moves applied only while that view is drawn and put back right
-  after, every frame). In selfies Kyle is the cutscene art from the
-  player's own BRIEF2.LFD (the arms-crossed bust), by the lens (true colour into the
-  saved photo via `iosCamera_compositeRGBA`, nearest colours on the software
-  renderer's screen; not on screen with the GPU renderer), with a mood per
-  photo; Action Freeze and the cinematic burst draw the player as
+  after, every frame). A selfie (the long press) is a group photo from
+  the player's phone, with no player in it: the nearest enemies turn to
+  the lens and pose in their own sprite frames, a theme per photo (party,
+  photobomb, one on the floor, class line-up, fireworks from the game's
+  own blasts and bolts, conga); nobody about gives "No one around for a
+  group photo". Action Freeze and the cinematic burst draw the player as
   HUMAN3.3DO coloured as Kyle.
 - **iOS code:**
   - `ios/`: the app around the engine. `ios_app.cmake` (bundle, Info.plist,

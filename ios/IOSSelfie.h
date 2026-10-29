@@ -36,6 +36,9 @@ int IOSSelfie_Begin(void);
 int IOSSelfie_IsActive(void);
 int IOSSelfie_IsPosed(void);
 int IOSSelfie_Failed(void);
+// What to tell the player when there's no photo (IOSSelfie_Begin gave 0,
+// or IOSSelfie_Failed): nobody about, or nowhere to take it from
+const char *IOSSelfie_CantMessage(void);
 // Everyone posed afresh (the next photo), drawn so in the next frame
 void IOSSelfie_Repose(void);
 // Everything put back as it was, and the view back to the player's

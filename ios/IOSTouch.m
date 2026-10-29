@@ -29,6 +29,7 @@
 #include "IOSCapture.h"
 #include "IOSPhotos.h"
 #include "IOSSelfieShots.h"
+#include "IOSSelfie.h"
 #include "IOSFreeze.h"
 #include "IOSCinema.h"
 #include "IOSCheat.h"
@@ -1349,7 +1350,7 @@ static int IOSTouch_StartSelfie(double now)
   }
   if (r != IOSSELFIESHOTS_STARTED) {
     // (they pose the world, which can't be done in a game others share)
-    IOS_ShowCameraMessage(_hud.bNetwork ? "Selfies are for single player" : "Can't take a selfie here");
+    IOS_ShowCameraMessage(_hud.bNetwork ? "Selfies are for single player" : IOSSelfie_CantMessage());
     return 0;
   }
   _iCamStage = CAM_SELFIE;
