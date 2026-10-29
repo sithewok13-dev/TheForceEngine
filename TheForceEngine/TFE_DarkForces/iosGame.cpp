@@ -488,8 +488,23 @@ namespace TFE_DarkForces
 	////////////////////////////////////////////////////
 	static s32 s_grabScale = 1;
 
+	// (with the GPU renderer, HD, the frame is read back from the screen
+	// once it's drawn there: its photos have the HUD in them, unless it's
+	// CAMERA's own view, which has none)
+	static bool gpuFrame()
+	{
+		return TFE_Settings::getGraphicsSettings()->rendererIndex != 0;
+	}
+	static s32 s_screenW = 0, s_screenH = 0;
+
 	void iosGame_frameBegin()
 	{
+		if (gpuFrame())
+		{
+			TFE_RenderBackend::getScreenPixelSize(&s_screenW, &s_screenH);
+			if (s_screenW > 0 && s_screenH > 0) { IOSCapture_FrameBegin(s_screenW, s_screenH); }
+			return;
+		}
 		u32 w = 0, h = 0;
 		vfb_getResolution(&w, &h);
 		if (!w || !h) { return; }
@@ -499,8 +514,14 @@ namespace TFE_DarkForces
 		IOSCapture_FrameBegin((int)w * s_grabScale, (int)h * s_grabScale);
 	}
 
-	void iosGame_afterScene() { IOSCapture_AfterScene(); }
-	void iosGame_afterHud() { IOSCapture_AfterHud(); }
+	void iosGame_afterScene() { if (!gpuFrame()) { IOSCapture_AfterScene(); } }
+	void iosGame_afterHud() { if (!gpuFrame()) { IOSCapture_AfterHud(); } }
+	void iosGame_screenDrawn()
+	{
+		if (!gpuFrame() || s_mode == IOSTOUCH_HIDDEN) { return; }
+		IOSCapture_AfterScene();
+		IOSCapture_AfterHud();
+	}
 }
 
 using namespace TFE_DarkForces;
@@ -514,9 +535,11 @@ extern "C"
 		const u8* src = vfb_getCpuBuffer();
 		const u32* pal = vfb_getPalette();
 		const s32 k = s_grabScale;
-		// (the software renderer's frame: with the GPU renderer, HD, there is
-		// none to read here yet)
-		if (TFE_Settings::getGraphicsSettings()->rendererIndex != 0) { return 0; }
+		if (gpuFrame())
+		{
+			if (w != s_screenW || h != s_screenH || !p) { return 0; }
+			return TFE_RenderBackend::readScreenRGBA(w, h, p) ? 1 : 0;
+		}
 		if (!src || !pal || !p || w != (int)fw * k || h != (int)fh * k) { return 0; }
 		const u32 stride = vfb_getStride();
 		// (bottom row first, as GL reads back)

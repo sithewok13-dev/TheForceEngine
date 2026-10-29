@@ -29,6 +29,8 @@ namespace TFE_DarkForces
 	void iosGame_frameBegin();
 	void iosGame_afterScene();
 	void iosGame_afterHud();
+	// (the render backend) the game's frame is on the screen, before the UI
+	void iosGame_screenDrawn();
 
 	// (the mission's frame, iosCamera.cpp) Draws the 3D view: from the
 	// player's eyes, or from CAMERA's photo view while a selfie, Action

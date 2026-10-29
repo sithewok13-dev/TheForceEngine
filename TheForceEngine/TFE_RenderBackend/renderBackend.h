@@ -132,6 +132,11 @@ namespace TFE_RenderBackend
 	bool getFrameBufferAsync();
 	bool getGPUColorConvert();
 	bool gpuRendererSupported();
+#ifdef TFE_IOS
+	// The screen as drawn so far (the bottom row first), in pixels
+	bool readScreenRGBA(s32 width, s32 height, u8* rgba);
+	void getScreenPixelSize(s32* width, s32* height);
+#endif
 	void* getVirtualDisplayGpuPtr();
 
 	u32 getVirtualDisplayWidth2D();

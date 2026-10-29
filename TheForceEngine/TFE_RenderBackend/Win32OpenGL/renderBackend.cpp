@@ -1,4 +1,7 @@
 #include <TFE_RenderBackend/renderBackend.h>
+#ifdef TFE_IOS
+#include <TFE_DarkForces/iosGame.h>
+#endif
 #include <TFE_RenderBackend/dynamicTexture.h>
 #include <TFE_RenderBackend/textureGpu.h>
 #include <TFE_RenderBackend/Win32OpenGL/openGL_Caps.h>
@@ -446,6 +449,11 @@ namespace TFE_RenderBackend
 			// [DBG] drawVirtualDisplay firing - if this logs during cutscene, stale texture is reaching the screen.
 			//TFE_System::logWrite(LOG_WARNING, "Cutscene", "[DBG] swap: drawVirtualDisplay() called (blitVirtualDisplay=%d, skipDisplay was false)", (int)blitVirtualDisplay);
 			drawVirtualDisplay();
+		#ifdef TFE_IOS
+			// (CAMERA's photos of the GPU renderer's frame: on the screen now,
+			// before the UI)
+			TFE_DarkForces::iosGame_screenDrawn();
+		#endif
 		}
 		else { glClear(GL_COLOR_BUFFER_BIT); }
 
@@ -469,6 +477,23 @@ namespace TFE_RenderBackend
 		}
 		s_screenCapture->update();
 	}
+
+#ifdef TFE_IOS
+	void getScreenPixelSize(s32* width, s32* height)
+	{
+		int w = 0, h = 0;
+		IOS_GL_GetSurfaceSize(&w, &h);
+		*width = w;
+		*height = h;
+	}
+
+	bool readScreenRGBA(s32 width, s32 height, u8* rgba)
+	{
+		glPixelStorei(GL_PACK_ALIGNMENT, 4);
+		glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+		return glGetError() == GL_NO_ERROR;
+	}
+#endif
 
 	void captureScreenToMemory(u32* mem)
 	{

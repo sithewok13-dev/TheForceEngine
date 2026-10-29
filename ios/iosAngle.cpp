@@ -202,3 +202,15 @@ SDL_bool IOS_GL_ExtensionSupported(const char* extension)
 	}
 	return SDL_FALSE;
 }
+
+void IOS_GL_GetSurfaceSize(int* width, int* height)
+{
+	EGLint w = 0, h = 0;
+	if (s_display != EGL_NO_DISPLAY && s_surface != EGL_NO_SURFACE)
+	{
+		eglQuerySurface(s_display, s_surface, EGL_WIDTH, &w);
+		eglQuerySurface(s_display, s_surface, EGL_HEIGHT, &h);
+	}
+	*width = (int)w;
+	*height = (int)h;
+}

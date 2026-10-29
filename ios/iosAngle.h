@@ -22,6 +22,8 @@ int           IOS_GL_SetSwapInterval(int interval);
 int           IOS_GL_GetSwapInterval(void);
 int           IOS_GL_SetAttribute(SDL_GLattr attr, int value);	// the config is fixed: ignored
 SDL_bool      IOS_GL_ExtensionSupported(const char* extension);
+// The surface's size in pixels (0 x 0 without one): what glReadPixels reads
+void          IOS_GL_GetSurfaceSize(int* width, int* height);
 
 // the window is drawn by Metal (ANGLE), not by SDL's OpenGL ES
 #define SDL_WINDOW_OPENGL           SDL_WINDOW_METAL
