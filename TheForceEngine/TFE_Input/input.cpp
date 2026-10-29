@@ -27,6 +27,7 @@ namespace TFE_Input
 	u8 s_mouseDown[MBUTTON_COUNT] = { 0 };
 	u8 s_mousePressed[MBUTTON_COUNT] = { 0 };
 	bool s_gameTextInput = false;
+	f32 s_gameTextBottom = 0.0f;
 	
 	s32 s_mouseWheel[2] = { 0 };
 	s32 s_mouseMove[2] = { 0 };
@@ -371,9 +372,15 @@ namespace TFE_Input
 		return s_mousePressed[button] != 0;
 	}
 
-	void setGameTextInput(bool enable)
+	void setGameTextInput(bool enable, f32 bottom)
 	{
 		s_gameTextInput = enable;
+		s_gameTextBottom = enable ? bottom : 0.0f;
+	}
+
+	f32 gameTextBottom()
+	{
+		return s_gameTextBottom;
 	}
 
 	bool gameTextInput()

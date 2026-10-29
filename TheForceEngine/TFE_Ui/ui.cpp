@@ -123,6 +123,16 @@ static void updateTextInput()
 		const u32 now = SDL_GetTicks();
 		if (!shown && (!s_asked || now - s_askedAt >= 500))
 		{
+			// the game's own box: where it ends, so SDL slides the view up
+			// above the keyboard (ImGui's boxes set their own)
+			const f32 bottom = TFE_Input::gameTextBottom();
+			if (bottom > 0.0f && window)
+			{
+				s32 w, h;
+				SDL_GetWindowSize(window, &w, &h);
+				SDL_Rect rect = { 0, 0, w, s32(bottom * f32(h)) };
+				SDL_SetTextInputRect(&rect);
+			}
 			SDL_StartTextInput();
 			s_asked = true;
 			s_askedAt = now;

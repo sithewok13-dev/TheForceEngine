@@ -1665,6 +1665,7 @@ static void IOSTouch_ToggleCheat(void)
   }
   IOSTouch_SetCheat(!_bCheatOn);
   IOS_ShowCameraMessage(_bCheatOn ? "Cheat on" : "Cheat off");
+  if (_bCheatOn) _iRequests |= IOSTOUCH_REQ_CHEATSOUND;  // one of Kyle's lines, as from the tray
   _ctCheatTicks++;
 }
 
@@ -1702,10 +1703,8 @@ void IOSTouch_CheatTyped(void)
     return;
   }
   IOSTouch_SetCheat(1);
-  if (!_bShowCheat) {
-    _bShowCheat = 1;
-    _iRequests |= IOSTOUCH_REQ_CHEATSOUND;
-  }
+  _bShowCheat = 1;
+  _iRequests |= IOSTOUCH_REQ_CHEATSOUND;
   IOS_ShowCameraMessage("Cheat on");
 }
 

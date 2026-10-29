@@ -153,7 +153,9 @@ namespace TFE_DarkForces
 	void agentMenu_update()
 	{
 	#ifdef TFE_IOS
-		TFE_Input::setGameTextInput(s_newAgentDlg != JFALSE);	// the keyboard for the name
+		// the keyboard for the name, the view slid up to just below its box
+		// (rows 87-100 of the menu's 200, which fills the screen's height)
+		TFE_Input::setGameTextInput(s_newAgentDlg != JFALSE, 108.0f / 200.0f);
 	#endif
 		if (s_newAgentDlg)
 		{
