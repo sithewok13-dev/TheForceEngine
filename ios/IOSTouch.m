@@ -4071,28 +4071,30 @@ static UIView *IOSTouch_MakeRowBack(void)
 // CHEAT's emblem: a round bomb with its cap at the top right, the fuse
 // curling up out of it and a spark at its end, in a box r across centred on
 // (cx, cy). Our own drawing.
+// The cheat's emblem (Dark Forces): a thermal detonator, the game's own
+// grenade (the Serious Sam port's was its serious bomb). The body is the
+// sphere with its middle band and three lights cut out of it (filled
+// even-odd); the "fuse" is the arming plunger on top, stroked.
 static void IOSTouch_CheatEmblemPaths(CGFloat cx, CGFloat cy, CGFloat r, UIBezierPath **ppBody, UIBezierPath **ppFuse)
 {
   const CGFloat k = r * 0.5;
-  UIBezierPath *body = [UIBezierPath bezierPathWithArcCenter:CGPointMake(cx - 0.12 * k, cy + 0.16 * k) radius:0.62 * k
+  const CGFloat R = 0.62 * k, yc = cy + 0.10 * k;
+  UIBezierPath *body = [UIBezierPath bezierPathWithArcCenter:CGPointMake(cx, yc) radius:R
                                                   startAngle:0 endAngle:2 * M_PI clockwise:YES];
-  // the cap: a little block tilted towards the top right
-  UIBezierPath *cap = [UIBezierPath bezierPathWithRect:CGRectMake(-0.17 * k, -0.11 * k, 0.34 * k, 0.22 * k)];
-  CGAffineTransform t = CGAffineTransformMakeTranslation(cx + 0.30 * k, cy - 0.30 * k);
-  t = CGAffineTransformRotate(t, -M_PI_4);
-  [cap applyTransform:t];
-  [body appendPath:cap];
-  *ppBody = body;
-  UIBezierPath *fuse = [UIBezierPath bezierPath];
-  [fuse moveToPoint:CGPointMake(cx + 0.40 * k, cy - 0.40 * k)];
-  [fuse addQuadCurveToPoint:CGPointMake(cx + 0.72 * k, cy - 0.78 * k) controlPoint:CGPointMake(cx + 0.72 * k, cy - 0.45 * k)];
-  // the spark: four short rays round the fuse's end
-  const CGPoint sp = CGPointMake(cx + 0.78 * k, cy - 0.86 * k);
-  for (int i = 0; i < 4; i++) {
-    const CGFloat a = M_PI_4 + i * M_PI_2;
-    [fuse moveToPoint:CGPointMake(sp.x + cos(a) * 0.10 * k, sp.y + sin(a) * 0.10 * k)];
-    [fuse addLineToPoint:CGPointMake(sp.x + cos(a) * 0.28 * k, sp.y + sin(a) * 0.28 * k)];
+  // the band round its middle
+  [body appendPath:[UIBezierPath bezierPathWithRect:CGRectMake(cx - 0.94 * R, yc - 0.075 * k, 1.88 * R, 0.15 * k)]];
+  // three lights above it
+  for (int i = -1; i <= 1; i++) {
+    [body appendPath:[UIBezierPath bezierPathWithRect:CGRectMake(cx + i * 0.24 * k - 0.055 * k, yc - 0.30 * k, 0.11 * k, 0.11 * k)]];
   }
+  body.usesEvenOddFillRule = YES;
+  *ppBody = body;
+  // the plunger: a stem and a cap on top
+  UIBezierPath *fuse = [UIBezierPath bezierPath];
+  [fuse moveToPoint:CGPointMake(cx, yc - R)];
+  [fuse addLineToPoint:CGPointMake(cx, yc - R - 0.16 * k)];
+  [fuse appendPath:[UIBezierPath bezierPathWithRoundedRect:CGRectMake(cx - 0.16 * k, yc - R - 0.30 * k, 0.32 * k, 0.14 * k)
+                                              cornerRadius:0.04 * k]];
   *ppFuse = fuse;
 }
 
@@ -4100,10 +4102,11 @@ static void IOSTouch_CheatEmblemPaths(CGFloat cx, CGFloat cy, CGFloat r, UIBezie
 {
   const CGFloat r = _aButtons[BTN_CHEAT].radius;
   UIBezierPath *body = nil, *fuse = nil;
-  IOSTouch_CheatEmblemPaths(r, r, r * 1.25, &body, &fuse);
+  IOSTouch_CheatEmblemPaths(r, r, r * 1.6, &body, &fuse); // (the detonator a little larger than the bomb was)
   cheatBody = [CAShapeLayer layer];
   cheatBody.frame = CGRectMake(0, 0, r * 2, r * 2);
   cheatBody.path = body.CGPath;
+  cheatBody.fillRule = kCAFillRuleEvenOdd; // (the detonator's band and lights)
   cheatFuse = [CAShapeLayer layer];
   cheatFuse.frame = cheatBody.frame;
   cheatFuse.path = fuse.CGPath;

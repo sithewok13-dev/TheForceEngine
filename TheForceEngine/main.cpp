@@ -692,6 +692,9 @@ int main(int argc, char* argv[])
 		}
 	}
 #endif
+#ifdef TFE_IOS
+	TFE_DarkForces::iosGame_hdByDefault();
+#endif
 	TFE_FrontEndUI::initConsole();
 	TFE_Audio::init(s_nullAudioDevice, TFE_Settings::getSoundSettings()->audioDevice);
 	TFE_MidiPlayer::init(TFE_Settings::getSoundSettings()->midiOutput, (MidiDeviceType)TFE_Settings::getSoundSettings()->midiType);

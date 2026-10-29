@@ -24,6 +24,10 @@ namespace TFE_DarkForces
 	// The app going to the background, or the game ending: the overlay hides
 	void iosGame_hide();
 
+	// At startup, once the window (and so the GPU) is up: HD on, once per
+	// install, where it can be
+	void iosGame_hdByDefault();
+
 	// (the mission's frame) CAMERA's frame grabs: the frame starts, the 3D
 	// view and the weapon are drawn, the HUD is drawn
 	void iosGame_frameBegin();

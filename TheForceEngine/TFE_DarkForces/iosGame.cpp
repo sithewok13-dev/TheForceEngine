@@ -17,6 +17,9 @@
 #include <TFE_FrontEndUI/frontEndUi.h>
 #include <TFE_Settings/settings.h>
 #include <TFE_RenderBackend/renderBackend.h>
+#include <TFE_FileSystem/paths.h>
+#include <TFE_FileSystem/fileutil.h>
+#include <TFE_FileSystem/filestream.h>
 #include <TFE_Jedi/Renderer/virtualFramebuffer.h>
 #include <TFE_Jedi/Renderer/rcommon.h>
 #include <TFE_Jedi/Level/rtexture.h>
@@ -238,15 +241,9 @@ namespace TFE_DarkForces
 		return g->rendererIndex != 0 && g->colorMode == COLORMODE_TRUE_COLOR && e->enableHdTextures;
 	}
 
-	static void toggleHd()
+	// The HD settings (or the original look's)
+	static void setHdSettings(bool on)
 	{
-		const bool on = !hdOn();
-		if (on && !hdAvailable())
-		{
-			IOSTouch_ShowMessage(TFE_FrontEndUI::enhanceGOBExists() ? "This device can't show the HD graphics"
-				: "HD needs the Dark Forces Remaster's files", 3.0);
-			return;
-		}
 		TFE_Settings_Graphics* g = TFE_Settings::getGraphicsSettings();
 		TFE_Settings_Enhancements* e = TFE_Settings::getEnhancementsSettings();
 		g->rendererIndex = on ? 1 : 0;
@@ -259,7 +256,36 @@ namespace TFE_DarkForces
 		e->enableHdSprites = on;
 		e->enableHdHud = on;
 		TFE_Settings::writeToDisk();
-		mission_render(g->rendererIndex, true);
+	}
+
+	void iosGame_hdByDefault()
+	{
+		// once per install: HD on where it can be (later, MENU's tray's HD
+		// decides, and is remembered)
+		char marker[TFE_MAX_PATH];
+		sprintf(marker, "%shd-default.txt", TFE_Paths::getPath(PATH_USER_DOCUMENTS));
+		if (FileUtil::exists(marker)) { return; }
+		FileStream file;
+		if (file.open(marker, Stream::MODE_WRITE))
+		{
+			const char* text = "HD was switched on once here; MENU's tray's HD decides from now on.\n";
+			file.writeBuffer(text, (u32)strlen(text));
+			file.close();
+		}
+		if (hdAvailable() && !hdOn()) { setHdSettings(true); }
+	}
+
+	static void toggleHd()
+	{
+		const bool on = !hdOn();
+		if (on && !hdAvailable())
+		{
+			IOSTouch_ShowMessage(TFE_FrontEndUI::enhanceGOBExists() ? "This device can't show the HD graphics"
+				: "HD needs the Dark Forces Remaster's files", 3.0);
+			return;
+		}
+		setHdSettings(on);
+		mission_render(TFE_Settings::getGraphicsSettings()->rendererIndex, true);
 		IOSTouch_ShowMessage(on ? "HD graphics on" : "HD off: the original look", 3.0);
 	}
 
