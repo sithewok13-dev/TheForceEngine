@@ -180,6 +180,9 @@ typedef struct IOSTouchHud {
   int ctLevels;               /* the levels the tray's LEVEL lists (0: none, a network game) */
   unsigned int ctCatches;     /* falls caught so far (a soft flash each time it goes up) */
   unsigned int uWorld;        /* changes with every level started or loaded */
+  /* Dark Forces: the Remaster's HD graphics (the GPU renderer, true color, HD textures and sprites) */
+  int bHD;                    /* on */
+  int bHDAvailable;           /* can be (the Remaster's files, a GPU that can) */
 } IOSTouchHud;
 
 /* What the player asked for, carried out by the main loop (IOSTouch_Update's result) */
@@ -193,6 +196,7 @@ enum {
   IOSTOUCH_REQ_CHEATSOUND = 1 << 6, /* the cheat came on from the tray or the typed word: one of Sam's lines */
   IOSTOUCH_REQ_LEVEL     = 1 << 7, /* the cheat's list of levels: go to IOSTouch_TakeLevelPick() */
   IOSTOUCH_REQ_MAP       = 1 << 8, /* Dark Forces: the automap on or off (MAP) */
+  IOSTOUCH_REQ_HD        = 1 << 9, /* Dark Forces: the HD graphics on or off (MENU's tray: HD) */
 };
 
 /* Buttons as the game reads them once per tick (IOSTouchInput.ulButtons) */

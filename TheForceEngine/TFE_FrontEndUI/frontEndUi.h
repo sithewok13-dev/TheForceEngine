@@ -58,6 +58,7 @@ namespace TFE_FrontEndUI
 	void logToConsole(const char* str);
 	bool uiControlsEnabled();
 	bool toggleEnhancements();
+	bool enhanceGOBExists();	// (the Remaster's HD files are there)
 
 	char* getSelectedMod();
 	void  clearSelectedMod();

@@ -16,6 +16,7 @@
 #include <TFE_Input/inputMapping.h>
 #include <TFE_FrontEndUI/frontEndUi.h>
 #include <TFE_Settings/settings.h>
+#include <TFE_RenderBackend/renderBackend.h>
 #include <TFE_Jedi/Renderer/virtualFramebuffer.h>
 #include <TFE_Jedi/Renderer/rcommon.h>
 #include <TFE_Jedi/Level/rtexture.h>
@@ -225,6 +226,46 @@ namespace TFE_DarkForces
 		*outH = h;
 	}
 
+	// MENU's tray's HD: the Remaster's HD graphics (TFE's GPU renderer in
+	// true color, with the HD textures, sprites and HUD), or the original
+	// look (the software renderer, 8-bit)
+	static bool hdAvailable()
+	{
+		return TFE_RenderBackend::gpuRendererSupported() && TFE_FrontEndUI::enhanceGOBExists();
+	}
+
+	static bool hdOn()
+	{
+		const TFE_Settings_Graphics* g = TFE_Settings::getGraphicsSettings();
+		const TFE_Settings_Enhancements* e = TFE_Settings::getEnhancementsSettings();
+		return g->rendererIndex != 0 && g->colorMode == COLORMODE_TRUE_COLOR && e->enableHdTextures;
+	}
+
+	static void toggleHd()
+	{
+		const bool on = !hdOn();
+		if (on && !hdAvailable())
+		{
+			IOSTouch_ShowMessage(TFE_FrontEndUI::enhanceGOBExists() ? "This device can't show the HD graphics"
+				: "HD needs the Dark Forces Remaster's files", 3.0);
+			return;
+		}
+		TFE_Settings_Graphics* g = TFE_Settings::getGraphicsSettings();
+		TFE_Settings_Enhancements* e = TFE_Settings::getEnhancementsSettings();
+		g->rendererIndex = on ? 1 : 0;
+		g->colorMode = on ? COLORMODE_TRUE_COLOR : COLORMODE_8BIT;
+		// HD at 720 lines, so the finer textures show; the original look at
+		// the original 200 (both widescreen: the width follows the screen)
+		g->gameResolution.x = on ? 1280 : 320;
+		g->gameResolution.z = on ? 720 : 200;
+		e->enableHdTextures = on;
+		e->enableHdSprites = on;
+		e->enableHdHud = on;
+		TFE_Settings::writeToDisk();
+		mission_render(g->rendererIndex, true);
+		IOSTouch_ShowMessage(on ? "HD graphics on" : "HD off: the original look", 3.0);
+	}
+
 	// The sithewok cheat, from the overlay's bits: god mode, everything given
 	// as it comes on and as each level starts, ammo kept full; flying and
 	// going through walls while those are on
@@ -339,6 +380,8 @@ namespace TFE_DarkForces
 		hud.bCheatAllowed = 1;
 		hud.ctLevels = (s32)s_maxLevelIndex;
 		hud.uWorld = s_world;
+		hud.bHD = hdOn() ? 1 : 0;
+		hud.bHDAvailable = hdAvailable() ? 1 : 0;
 
 		SDL_Window* window = SDL_GetKeyboardFocus();
 		if (!window) { window = SDL_GetMouseFocus(); }
@@ -381,6 +424,7 @@ namespace TFE_DarkForces
 		if (requests & IOSTOUCH_REQ_RESUME) { inputMapping_setStatePress(IADF_PAUSE); }
 		if (requests & IOSTOUCH_REQ_MAP) { inputMapping_setStatePress(IADF_AUTOMAP); }
 		if (requests & IOSTOUCH_REQ_CHEATSOUND) { IOSCheatGame_PlaySound(); }
+		if (requests & IOSTOUCH_REQ_HD) { toggleHd(); }
 		if (requests & IOSTOUCH_REQ_LEVEL)
 		{
 			const s32 level = IOSTouch_TakeLevelPick();
@@ -473,6 +517,9 @@ extern "C"
 		const u8* src = vfb_getCpuBuffer();
 		const u32* pal = vfb_getPalette();
 		const s32 k = s_grabScale;
+		// (the software renderer's frame: with the GPU renderer, HD, there is
+		// none to read here yet)
+		if (TFE_Settings::getGraphicsSettings()->rendererIndex != 0) { return 0; }
 		if (!src || !pal || !p || w != (int)fw * k || h != (int)fh * k) { return 0; }
 		const u32 stride = vfb_getStride();
 		// (bottom row first, as GL reads back)

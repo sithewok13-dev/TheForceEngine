@@ -216,6 +216,7 @@ enum {
   KIND_CHEATSWITCH, // (MENU's tray) shows CHEAT and switches the cheat on, or leaves cheat mode, when the touch lifts on it
   KIND_LEVELPICK,// (MENU's tray, the cheat on) opens the list of levels, when the touch lifts on it
   KIND_LOOKSPEED,// (MENU's tray) the next look speed, when the touch lifts on it; held IOSTOUCH_MENU_HOLD, back to 1x
+  KIND_HD,       // (MENU's tray, Dark Forces) the Remaster's HD graphics on or off, when the touch lifts on it
 };
 
 // which modes a button shows in
@@ -258,7 +259,7 @@ enum {
   BTN_CAMERA,
   BTN_CHEAT,
   BTN_RESUME,
-  BTN_TRAYLOOK, BTN_TRAYSENS, BTN_TRAYGYRO, BTN_TRAYFPS, BTN_TRAYCAM, BTN_TRAYCHEAT, BTN_TRAYLEVEL, BTN_TRAYKEYS, // MENU's tray (left to right), hidden unless it is open
+  BTN_TRAYLOOK, BTN_TRAYSENS, BTN_TRAYGYRO, BTN_TRAYFPS, BTN_TRAYHD, BTN_TRAYCAM, BTN_TRAYCHEAT, BTN_TRAYLEVEL, BTN_TRAYKEYS, // MENU's tray (left to right), hidden unless it is open
   BTN_CAMROW_PHOTO, BTN_CAMROW_SELFIES, BTN_CAMROW_FREEZE,           // CAMERA's options (left to right)
   BTN_CAMOPT_CLEAN, BTN_CAMOPT_HUD, BTN_CAMOPT_BTNS,                 // PHOTO's ticks (left to right)
   BTN_COUNT
@@ -283,6 +284,7 @@ static IOSTouchButton _aButtons[] = {
   [BTN_TRAYSENS]  = { "SENS",        KIND_GYROSENS, 0,                      20.0, 0, SHOW_ALL },
   [BTN_TRAYGYRO]  = { "GYRO",        KIND_GYRO,     0,                      20.0, 0, SHOW_ALL },
   [BTN_TRAYFPS]   = { "FPS",         KIND_FPS,      0,                      20.0, 0, SHOW_ALL },
+  [BTN_TRAYHD]    = { "HD",          KIND_HD,       IOSTOUCH_REQ_HD,        20.0, 0, SHOW_PLAY },
   [BTN_TRAYCAM]   = { "",            KIND_CAMSWITCH, 0,                     20.0, 0, SHOW_ALL },
   [BTN_TRAYCHEAT] = { "CHEAT",       KIND_CHEATSWITCH, 0,                   20.0, 0, SHOW_ALL },
   [BTN_TRAYLEVEL] = { "LEVEL",       KIND_LEVELPICK, 0,                     20.0, 0, SHOW_PLAY },
@@ -1548,6 +1550,9 @@ static void IOSTouch_UseTrayButton(int button)
   }
   else if (kind == KIND_KEYBOARD) {
     _iRequests |= _aButtons[button].ulAction; // the console, with the iOS keyboard
+  }
+  else if (kind == KIND_HD) {
+    _iRequests |= _aButtons[button].ulAction; // (the game switches, and says so)
   }
   else if (kind == KIND_FPS) {
     IOSTouch_SetShowFps(!_bShowFps);
@@ -4396,6 +4401,7 @@ static void IOSTouch_CheatEmblemPaths(CGFloat cx, CGFloat cy, CGFloat r, UIBezie
     // ticks are open, each kind ticked, FREEZE on, CAMERA taking a burst)
     const int bOn = ((i == BTN_TRAYKEYS || i == BTN_MENU) && _iMode == IOSTOUCH_CONSOLE)
                     || (i == BTN_TRAYFPS && _bShowFps)
+                    || (i == BTN_TRAYHD && _hud.bHD)
                     || (i == BTN_TRAYGYRO && bGyro && _iGyroMode != IOSTOUCH_GYRO_OFF)
                     || (i == BTN_TRAYCAM && _bShowCamera) || (i == BTN_CAMROW_PHOTO && _bCamKindsOpen)
                     || (_aButtons[i].kind == KIND_CAMKIND && (_iCameraKinds & (int)_aButtons[i].ulAction))
@@ -4404,6 +4410,7 @@ static void IOSTouch_CheatEmblemPaths(CGFloat cx, CGFloat cy, CGFloat r, UIBezie
     const int bTray = IOSTouch_IsTrayButton(i); // only there while the tray is open
     CGFloat alpha = (bHeld || bOn || bTray) ? 1.0 : IOSTOUCH_IDLE_ALPHA;
     if (i == BTN_TRAYGYRO && !bGyro) alpha *= 0.45;                                       // no gyro here
+    if (i == BTN_TRAYHD && !_hud.bHDAvailable) alpha *= 0.45;                            // no HD here
     if (i == BTN_TRAYSENS && (!bGyro || _iGyroMode == IOSTOUCH_GYRO_OFF)) alpha *= 0.45; // ...or it's off
     l.alpha = alpha;
     if (i != BTN_FIRE) {
