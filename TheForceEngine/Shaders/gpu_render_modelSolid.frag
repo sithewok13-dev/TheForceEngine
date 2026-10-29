@@ -9,7 +9,12 @@ uniform vec4 TextureOffsets;
 
 in vec2 Frag_Uv;
 in vec3 Frag_WorldPos;
+#ifdef TFE_GLES
+in vec2 Frag_LightW;	// see gpu_render_modelSolid.vert
+#define Frag_Light (Frag_LightW.x / Frag_LightW.y)
+#else
 noperspective in float Frag_Light;
+#endif
 flat in float Frag_ModelY;
 #ifdef OPT_TRUE_COLOR
 flat in vec4 Frag_Color;
@@ -66,7 +71,7 @@ void main()
 				if (worldAmbient < 31.0 || cameraLightSource > 0.0)
 				{
 					float lightSource = getLightRampValue(z, worldAmbient);
-					if (lightSource > 0)
+					if (lightSource > 0.0)
 					{
 						light += lightSource;
 					}

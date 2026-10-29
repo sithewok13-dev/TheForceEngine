@@ -124,7 +124,7 @@ void main()
 					// Scale when looking up by view[1][1] which is 1.0 when looking straight and tends toward 0.0 as looking up or down.
 					d /= CameraView[1].y;
 					// Clamp to the maximum top.
-					y0 = CameraPos.y - min(100, d);
+					y0 = CameraPos.y - min(100.0, d);
 				}
 				else
 				{

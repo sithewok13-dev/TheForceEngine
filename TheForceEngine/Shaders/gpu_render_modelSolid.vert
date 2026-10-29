@@ -26,7 +26,13 @@ in vec4 vtx_color;
 out float gl_ClipDistance[8];
 out vec2 Frag_Uv;
 out vec3 Frag_WorldPos;
+#ifdef TFE_GLES
+// GLSL ES 3.00 has no noperspective: pass (light, 1) * w, interpolated with
+// perspective; the fragment shader divides, which gives the same as noperspective.
+out vec2 Frag_LightW;
+#else
 noperspective out float Frag_Light;
+#endif
 flat out float Frag_ModelY;
 #ifdef OPT_TRUE_COLOR
 flat out vec4 Frag_Color;
@@ -108,7 +114,7 @@ void main()
 			if (worldAmbient < 31.0 || cameraLightSource > 0.0)
 			{
 				float lightSource = getLightRampValue(z, worldAmbient);
-				if (lightSource > 0)
+				if (lightSource > 0.0)
 				{
 					light += lightSource;
 				}
@@ -139,7 +145,11 @@ void main()
 #else
 	Frag_Color = int(vtx_color.x * 255.0 + 0.5);
 #endif
+#ifdef TFE_GLES
+	Frag_LightW = vec2(vertexLighting ? light : ambient, 1.0) * gl_Position.w;
+#else
 	Frag_Light = vertexLighting ? light : ambient;
+#endif
 	Frag_TextureId = int(floor(vtx_color.y * 255.0 + 0.5) + floor(vtx_color.z * 255.0 + 0.5)*256.0 + 0.5);
 	Frag_TextureMode = textureMode;
 }
