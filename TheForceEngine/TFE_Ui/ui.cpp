@@ -108,11 +108,32 @@ void setUiInput(const void* inputEvent)
 // itself where there is no on-screen keyboard).
 static void updateTextInput()
 {
+	// (whether the keyboard is on screen, not SDL_IsTextInputActive: that only
+	// says SDL takes typed text, which on iOS it does all along -- the touch
+	// overlay keeps it so for a hardware keyboard -- so the keyboard was never
+	// asked for)
+	static bool s_asked = false;
+	static u32 s_askedAt = 0;
+	SDL_Window* window = SDL_GetKeyboardFocus();
 	const bool wantText = ImGui::GetIO().WantTextInput || TFE_Input::gameTextInput();
-	if (wantText != (SDL_IsTextInputActive() == SDL_TRUE))
+	const bool shown = window && SDL_IsScreenKeyboardShown(window) == SDL_TRUE;
+	if (wantText)
 	{
-		if (wantText) { SDL_StartTextInput(); }
-		else { SDL_StopTextInput(); }
+		// asked again at most twice a second, should iOS put it away
+		const u32 now = SDL_GetTicks();
+		if (!shown && (!s_asked || now - s_askedAt >= 500))
+		{
+			SDL_StartTextInput();
+			s_asked = true;
+			s_askedAt = now;
+		}
+	}
+	else if (s_asked)
+	{
+		s_asked = false;
+		SDL_StopTextInput();
+		// (stopping also stops SDL's typed text, which a hardware keyboard needs)
+		SDL_EventState(SDL_TEXTINPUT, SDL_ENABLE);
 	}
 }
 
