@@ -97,7 +97,9 @@ They own both the original Dark Forces and Nightdive's Dark Forces Remaster
   - Move stick where the left thumb lands; drag elsewhere to look.
   - QUICK SAVE / QUICK LOAD: a 0.3 s hold with a ring. Sliding off cancels;
     QUICK SAVE wins a tie.
-  - MENU: tap = game menu; hold 0.45 s = tray with SENS, GYRO, FPS, keyboard.
+  - MENU: tap = game menu; hold 0.45 s = tray with SENS, GYRO, OPACITY, FPS,
+    keyboard. OPACITY: tap = a slider under the tray (20-100%, 5% steps) for
+    every control but the tray; held 0.45 s = back to 100%. Remembered.
   - GYRO: OFF (default) / TOUCH (aims while either thumb is down; lifting both
     freezes the view) / ALWAYS. SENS 1.0/1.5/2.0/3.0, default 1.5. Remembered.
   - NEXT WPN: tap = next; a 10 pt slide opens the weapon wheel at once; a 0.3 s
