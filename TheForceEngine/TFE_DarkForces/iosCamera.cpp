@@ -888,12 +888,11 @@ namespace TFE_DarkForces
 	static const f32 c_gpHeadMargin = 0.02f;
 	static const s32 c_gpShotsKept = 8;
 
-	enum { POSE_ATTACK = 0, POSE_ANGER, POSE_IDLE, POSE_WOUND, POSE_MOVE, POSE_KINDS };
-	enum { THEME_PARTY = 0, THEME_PHOTOBOMB, THEME_FLOOR, THEME_CLASS, THEME_FIREWORKS, THEME_CONGA, THEMES };
-	static const s32 c_themeWeights[THEMES] = { 24, 18, 14, 14, 16, 14 };
-	static const s32 c_themeLeast[THEMES] = { 1, 1, 2, 2, 1, 2 };	// (people it needs)
+	enum { THEME_HUDDLE = 0, THEME_PEEK, THEME_PILE, THEME_TOTEM, THEME_JUMP, THEME_CLASS, THEME_DUEL, THEMES };
+	static const s32 c_themeWeights[THEMES] = { 18, 24, 14, 12, 14, 10, 8 };
+	static const s32 c_themeLeast[THEMES] = { 1, 1, 1, 2, 1, 3, 2 };	// (people it needs)
 	enum { CAM_EYE = 0, CAM_RAISED, CAM_LOW, CAM_STYLES };
-	static const s32 c_styleWeights[CAM_STYLES] = { 50, 32, 18 };
+	static const s32 c_styleWeights[CAM_STYLES] = { 45, 30, 25 };
 
 	// A choice at random by weight, but not `notThis` (the last photo's)
 	static s32 pickWeighted(const s32* weights, s32 n, s32 notThis)
@@ -925,7 +924,6 @@ namespace TFE_DarkForces
 	static s32 s_peopleCount = 0;
 	static s32 s_maxPeople = IOSSELFIE_MAX_PEOPLE;
 	static s32 s_gpTheme = -1, s_gpThemeBefore = -1, s_gpStyle = -1, s_gpShot = 0;
-	static SecObject* s_gpBomber = nullptr;
 	static V3 s_gpUsedCams[c_gpShotsKept];
 	static f32 s_gpUsedYaws[c_gpShotsKept];
 	static s32 s_gpUsedCount = 0;
@@ -1093,7 +1091,7 @@ namespace TFE_DarkForces
 			{
 				f32 lift = 0.3f;
 				if (style == CAM_RAISED) { lift = 1.4f + f32(t) * 1.0f; }
-				if (style == CAM_LOW) { lift = -1.0f - f32(t) * 0.4f; }
+				if (style == CAM_LOW) { lift = -2.6f - f32(t) * 0.8f; }	// (a worm's-eye view)
 				const V3 cam = eye + fwd * b + right * sd + up(lift);
 				RSector* camSec = nullptr;
 				if (!roomAt(eye, s_eyeSector, cam, 0.6f, &camSec)) { continue; }
@@ -1102,7 +1100,7 @@ namespace TFE_DarkForces
 					const f32 yaw = headingTo(cam, mid) + f32(a) * degToRad(9.0f);
 					const V3 d = mid + up(-1.2f) - cam;
 					f32 pitch = atan2f(-d.y, maxf(lenXZ(d), 0.1f));
-					if (style == CAM_LOW) { pitch += degToRad(3.0f); }
+					if (style == CAM_LOW) { pitch = degToRad(5.0f + rand01() * 7.0f); }
 					pitch = clampf(pitch, -c_gpPitchMax, c_gpPitchMax);
 					const View v = viewAt(cam, yaw, pitch);
 					f32 sc = groupScore(v, camSec) - 4.0f * (1.0f - viewDepth(v, camSec)) + rand01() * 0.7f;
@@ -1150,64 +1148,69 @@ namespace TFE_DarkForces
 		return true;
 	}
 
-	static bool pickPose(SecObject* obj, s32 kind, s32* anim, s32* frame)
+	static f32 sideways() { return (chance(2) ? 1.0f : -1.0f) * degToRad(70.0f + rand01() * 30.0f); }
+
+	// ---- poses: never an attack or an aim toward the lens. Standing,
+	// strutting turned about, flailing (a death's first frames: arms and
+	// hat in the air, for a leap of joy), mid-fall, flat out, turned away
+	enum { ACT_STAND = 0, ACT_STRUT, ACT_CHEER, ACT_FALL, ACT_FLOP, ACT_BACK, ACT_KINDS };
+
+	// A death's frames: the early ones (flailing, the hat in the air; not
+	// the very first, lit by the shot) or the rest (falling, down)
+	static bool pickDeath(SecObject* obj, bool early, s32* anim, s32* frame)
 	{
-		static const s32 order[POSE_KINDS][5] =
+		const s32 first = chance(2) ? ANIM_DIE1 : ANIM_DIE2;
+		for (s32 action : { first, first == ANIM_DIE1 ? s32(ANIM_DIE2) : s32(ANIM_DIE1) })
 		{
-			{ ANIM_ATTACK1, ANIM_ATTACK2, ANIM_ATTACK1_END, ANIM_IDLE, ANIM_MOVE },
-			{ ANIM_ATTACK2, ANIM_ATTACK1_END, ANIM_ATTACK1, ANIM_IDLE, ANIM_MOVE },
-			{ ANIM_IDLE, ANIM_MOVE, ANIM_ATTACK1, -1, -1 },
-			{ ANIM_PAIN, ANIM_IDLE, ANIM_MOVE, -1, -1 },
-			{ ANIM_MOVE, ANIM_IDLE, ANIM_ATTACK1, -1, -1 },
-		};
-		for (s32 i = 0; i < 5; i++)
-		{
-			const s32 action = order[kind][i];
-			if (action < 0) { break; }
-			if (pickAction(obj, action, action == ANIM_IDLE ? 0 : -1, anim, frame)) { return true; }
+			const s32 a = waxAnimFor(obj, action);
+			if (a < 0) { continue; }
+			const s32 count = WAX_AnimPtr(obj->wax, a)->frameCount;
+			const s32 from = min(count / 4 + (count >= 4 ? 1 : 0), count - 1), half = max(count * 3 / 5, from + 1);
+			*anim = a;
+			*frame = early ? min(from + randInt(half - from), count - 1) : min(half + randInt(max(count - half, 1)), count - 1);
+			return true;
 		}
 		return false;
 	}
 
-	static f32 sideways() { return (chance(2) ? 1.0f : -1.0f) * degToRad(70.0f + rand01() * 30.0f); }
+	static f32 faceLens(const View& v, V3 at) { return headingTo(at, v.pos); }
 
-	// Someone having fun: blasters fired off to the side (never at the lens),
-	// a flinch that reads as a laugh or a dance, a leap in mid-stride, or
-	// just standing about grinning
-	static void partyPose(const View& v, const Person& p)
+	// Posed (false: nothing that would do, so better left out)
+	static bool doPose(const View& v, const Person& p, s32 act, f32 turn = 0.0f)
 	{
-		f32 yaw = headingTo(p.pos, v.pos);
 		s32 anim = -1, frame = 0;
-		const s32 r = randInt(100);
-		if (r < 32)
+		f32 yaw = faceLens(v, p.pos) + turn + (rand01() - 0.5f) * degToRad(16.0f);
+		bool ok = false;
+		switch (act)
 		{
-			// (a side view: the gun points away)
-			yaw += sideways();
-			if (!pickAction(p.obj, chance(3) ? ANIM_ATTACK2 : ANIM_ATTACK1, chance(2) ? -2 : -1, &anim, &frame)) { pickPose(p.obj, POSE_IDLE, &anim, &frame); }
+			case ACT_STRUT:
+				ok = pickAction(p.obj, ANIM_MOVE, -1, &anim, &frame);
+				if (turn == 0.0f) { yaw += (chance(2) ? 1.0f : -1.0f) * degToRad(25.0f + rand01() * 35.0f); }
+				break;
+			case ACT_CHEER: ok = pickDeath(p.obj, true, &anim, &frame); break;
+			case ACT_STAND:
+				// (three-quarters on: a held gun points off to the side)
+				if (turn == 0.0f) { yaw += (chance(2) ? 1.0f : -1.0f) * degToRad(15.0f + rand01() * 25.0f); }
+				break;
+			case ACT_FALL: ok = pickDeath(p.obj, false, &anim, &frame); break;
+			case ACT_FLOP: ok = pickAction(p.obj, ANIM_DEAD, 0, &anim, &frame) || pickDeath(p.obj, false, &anim, &frame); break;
+			case ACT_BACK:
+				yaw += c_pi;
+				ok = chance(2) && pickAction(p.obj, ANIM_MOVE, -1, &anim, &frame);
+				break;
+			default: break;
 		}
-		else if (r < 58)
-		{
-			yaw += (rand01() - 0.5f) * degToRad(30.0f);
-			if (!pickAction(p.obj, ANIM_PAIN, -1, &anim, &frame)) { pickPose(p.obj, POSE_IDLE, &anim, &frame); }
-		}
-		else if (r < 82)
-		{
-			yaw += (rand01() - 0.5f) * degToRad(70.0f);
-			if (!pickAction(p.obj, ANIM_MOVE, -1, &anim, &frame)) { pickPose(p.obj, POSE_IDLE, &anim, &frame); }
-		}
-		else
-		{
-			yaw += (rand01() - 0.5f) * degToRad(12.0f);
-			pickPose(p.obj, POSE_IDLE, &anim, &frame);
-		}
+		if (!ok) { ok = pickAction(p.obj, ANIM_IDLE, 0, &anim, &frame) || pickAction(p.obj, ANIM_MOVE, 0, &anim, &frame); }
+		if (!ok) { return false; }
 		pc_setPose(p.obj, yaw, anim, frame);
+		return true;
 	}
 
-	static void standPose(const View& v, const Person& p, f32 turn)
+	// One of the standing ones' poses, a cheerful mix
+	static s32 crowdAct()
 	{
-		s32 anim = -1, frame = 0;
-		if (!pickPose(p.obj, POSE_IDLE, &anim, &frame)) { anim = -1; }
-		pc_setPose(p.obj, headingTo(p.pos, v.pos) + turn, anim, frame);
+		const s32 r = randInt(100);
+		return r < 38 ? ACT_STAND : (r < 66 ? ACT_CHEER : (r < 90 ? ACT_STRUT : ACT_BACK));
 	}
 
 	// A place on the floor at this point of the frame (-1..1 across) and
@@ -1230,25 +1233,6 @@ namespace TFE_DarkForces
 		p.pos = feet;
 		p.head = feet + up(p.height * 0.85f);
 		p.mid = feet + up(p.height * 0.5f);
-	}
-
-	// The people in the photo (and the posable ones among them), the
-	// nearest first; how far the group stands
-	static s32 inFramePeople(const View& v, s32* list, s32 maxCount, f32* groupDepth)
-	{
-		s32 n = 0;
-		f32 depthSum = 0.0f;
-		for (s32 i = 0; i < s_peopleCount && n < maxCount; i++)
-		{
-			Person& p = s_people[i];
-			f32 z;
-			p.inFrame = headInFrame(v, p.head, &z) || headInFrame(v, p.mid, &z);
-			if (!p.inFrame || pc_isHidden(p.obj) || !objValid(p.obj)) { p.inFrame = false; continue; }
-			list[n++] = i;
-			depthSum += z;
-		}
-		*groupDepth = n ? depthSum / f32(n) : 10.0f;
-		return n;
 	}
 
 	// ---- added for the photo: fireworks (the game's own blasts and bolts)
@@ -1319,180 +1303,288 @@ namespace TFE_DarkForces
 		}
 	}
 
-	// ---- the themes
-	static void themeParty(const View& v, const s32* list, s32 n)
+	// ---- the themes: everyone brought in close and posed
+
+	static bool s_gpPlaced[c_gpMaxPersons];
+
+	// Into the photo at this point of the frame (-1..1 across) and distance,
+	// lifted off the floor by lift (a little nearer, farther or more to the
+	// middle where the floor's not there); the point at 'look' of their
+	// height inside the frame
+	static bool placeAt(const View& v, s32 i, f32 fx, f32 depth, f32 lift, f32 look = 0.85f)
 	{
-		for (s32 k = 0; k < n; k++) { partyPose(v, s_people[list[k]]); }
+		static const f32 tries[][2] = { { 1.0f, 1.0f }, { 1.15f, 1.0f }, { 0.88f, 1.0f }, { 1.0f, 0.6f }, { 1.35f, 0.8f }, { 0.8f, 0.5f }, { 1.6f, 0.4f } };
+		Person& p = s_people[i];
+		for (const auto& t : tries)
+		{
+			V3 feet;
+			RSector* sec;
+			if (!floorSpot(v, fx * t[1], depth * t[0], p.height + lift, &feet, &sec)) { continue; }
+			feet = feet + up(lift);
+			f32 x, y, z;
+			project(v, feet + up(p.height * look), &x, &y, &z);
+			if (z < 0.8f || y > c_gpFitUp || y < -c_gpFitDown) { continue; }
+			pc_unhide(p.obj);
+			movePerson(p, feet, sec);
+			s_gpPlaced[i] = true;
+			return true;
+		}
+		return false;
 	}
 
-	// A class photo: a tidy line across the frame, everyone standing,
-	// facing the lens
-	static void themeClass(const View& v, const s32* list, s32 n, f32 groupDepth)
+	static bool placePosed(const View& v, s32 i, f32 fx, f32 depth, f32 lift, s32 act, f32 turn = 0.0f)
 	{
-		const s32 count = min(n, 7);
-		const f32 depth = clampf(groupDepth, 8.0f, 14.0f);
+		if (!placeAt(v, i, fx, depth, lift)) { return false; }
+		if (!doPose(v, s_people[i], act, turn)) { s_gpPlaced[i] = false; pc_hide(s_people[i].obj); return false; }
+		return true;
+	}
+
+	// A row across the frame, from fx0 to fx1, everyone posed by pick
+	template <typename Pick>
+	static void row(const View& v, const s32* list, s32 n, f32 fx0, f32 fx1, f32 depth, f32 jitter, Pick pick)
+	{
 		for (s32 k = 0; k < n; k++)
 		{
-			Person& p = s_people[list[k]];
-			if (k < count)
-			{
-				const f32 fx = (count == 1) ? 0.0f : -0.62f + 1.24f * f32(k) / f32(count - 1);
-				V3 feet;
-				RSector* sec;
-				if (floorSpot(v, fx, depth + (k & 1) * 0.6f, p.height, &feet, &sec)) { movePerson(p, feet, sec); }
-			}
-			standPose(v, p, (rand01() - 0.5f) * degToRad(4.0f));
+			const f32 fx = (n == 1) ? 0.5f * (fx0 + fx1) : fx0 + (fx1 - fx0) * f32(k) / f32(n - 1);
+			f32 lift = 0.0f, turn = 0.0f;
+			const s32 act = pick(k, fx, &lift, &turn);
+			placePosed(v, list[k], fx + (rand01() - 0.5f) * 0.06f, depth + (rand01() - 0.5f) * jitter, lift, act, turn);
 		}
 	}
 
-	// A conga: everyone the same way, mid-stride, in a line across
-	static void themeConga(const View& v, const s32* list, s32 n, f32 groupDepth)
+	// A cheer in the air now and then (jumping for joy)
+	static s32 crowdPick(f32* lift, f32 jumpChance)
 	{
-		const s32 count = min(n, 7);
-		const f32 depth = clampf(groupDepth, 8.0f, 14.0f);
-		const f32 dir = chance(2) ? 1.0f : -1.0f;
-		const f32 yaw = v.yaw + c_pi + dir * degToRad(80.0f);	// (side on, all one way)
-		for (s32 k = 0; k < n; k++)
-		{
-			Person& p = s_people[list[k]];
-			if (k < count)
-			{
-				const f32 fx = (count == 1) ? 0.0f : dir * (-0.6f + 1.2f * f32(k) / f32(count - 1));
-				V3 feet;
-				RSector* sec;
-				if (floorSpot(v, fx, depth + f32(k) * 0.5f, p.height, &feet, &sec)) { movePerson(p, feet, sec); }
-			}
-			s32 anim = -1, frame = 0;
-			const s32 a = waxAnimFor(p.obj, ANIM_MOVE);
-			if (a >= 0)
-			{
-				anim = a;
-				const WaxAnim* w = WAX_AnimPtr(p.obj->wax, a);
-				frame = (k * 2 + s_gpShot) % max(w->frameCount, 1);
-			}
-			pc_setPose(p.obj, yaw, anim, frame);
-		}
+		s32 act = crowdAct();
+		if (act == ACT_CHEER && rand01() < jumpChance) { *lift = 0.6f + rand01() * 1.6f; }
+		return act;
 	}
 
-	// Someone posing on the floor in front of the others (lying on a frame
-	// of their fall), the rest standing about or laughing
-	static bool themeFloor(const View& v, const s32* list, s32 n, f32 groupDepth)
+	// A huddle: heads together, close to the lens, all turned a little in
+	static void themeHuddle(const View& v, const s32* list, s32 n)
 	{
-		Person& p = s_people[list[0]];
-		s32 anim = -1, frame = 0;
-		if (!pickAction(p.obj, ANIM_DEAD, 0, &anim, &frame) && !pickAction(p.obj, ANIM_DIE1, -2, &anim, &frame) &&
-			!pickAction(p.obj, ANIM_DIE2, -2, &anim, &frame)) { return false; }
-		V3 feet;
-		RSector* sec;
+		const s32 count = min(n, 6);
+		const f32 depth = 4.6f + 0.45f * f32(count);
+		const f32 spread = 0.12f + 0.08f * f32(count);
+		row(v, list, count, -spread, spread, depth, 0.9f, [&](s32 k, f32 fx, f32* lift, f32* turn)
+		{
+			*turn = (fx < 0.0f ? -1.0f : 1.0f) * degToRad(10.0f + rand01() * 25.0f);
+			if ((k & 1) && chance(2)) { *lift = 0.4f + rand01() * 0.9f; return s32(ACT_CHEER); }
+			return chance(4) ? s32(ACT_STRUT) : (chance(3) ? s32(ACT_CHEER) : s32(ACT_STAND));
+		});
+	}
+
+	// A photobomb: a face right up at the lens from the side, half out of
+	// the frame, the rest of them behind
+	static bool themePeek(const View& v, const s32* list, s32 n)
+	{
+		const s32 b = list[randInt(min(n, 3))];
+		const f32 side = chance(2) ? 1.0f : -1.0f;
 		bool placed = false;
 		for (s32 t = 0; t < 6 && !placed; t++)
 		{
-			const f32 depth = maxf(groupDepth - 3.0f, c_gpNear + 1.0f) + f32(t) * 0.8f;
-			if (!floorSpot(v, (rand01() - 0.5f) * 0.5f, depth, 1.0f, &feet, &sec)) { continue; }
-			// (all of them in the photo, clear of the bottom edge)
+			const f32 depth = 1.8f + rand01() * 0.9f + f32(t / 2) * 0.6f;
+			const f32 fx = ((t & 1) ? -side : side) * (0.84f + rand01() * 0.14f);
+			placed = placeAt(v, b, fx, depth, chance(4) ? 0.3f : 0.0f);
+		}
+		if (!placed || !doPose(v, s_people[b], chance(4) ? ACT_CHEER : ACT_STAND, 0.0f)) { if (placed) { s_gpPlaced[b] = false; pc_hide(s_people[b].obj); } return false; }
+		static s32 rest[c_gpMaxPersons];
+		s32 m = 0;
+		for (s32 k = 0; k < n && m < 5; k++) { if (list[k] != b) { rest[m++] = list[k]; } }
+		const f32 spread = 0.06f + 0.08f * f32(m);
+		row(v, rest, m, -spread, spread, 6.5f + 0.4f * f32(m), 1.2f, [&](s32, f32, f32* lift, f32*) { return crowdPick(lift, 0.5f); });
+		return true;
+	}
+
+	// A pile of them flat out (or mid-fall) right in front, in the middle,
+	// the others round it cheering
+	static void themePile(const View& v, const s32* list, s32 n)
+	{
+		const s32 bodies = (n < 3) ? 1 : min(2 + randInt(2), n - 1);
+		// (the nearest floor in the photo, a little up from its bottom edge)
+		f32 depth = 6.0f;
+		for (f32 d = 4.5f; d < 16.0f; d += 0.75f)
+		{
+			V3 feet;
+			RSector* sec;
+			if (!floorSpot(v, 0.0f, d, 1.0f, &feet, &sec)) { continue; }
 			f32 x, y, z;
-			project(v, feet, &x, &y, &z);
-			placed = z > 0.15f && y >= -c_gpFitDown + 0.05f;
+			project(v, feet + up(0.8f), &x, &y, &z);
+			if (y >= -c_gpFitDown + 0.12f) { depth = d + rand01() * 0.8f; break; }
 		}
-		if (!placed) { return false; }
-		movePerson(p, feet, sec);
-		pc_setPose(p.obj, headingTo(feet, v.pos) + sideways(), anim, frame);
-		for (s32 k = 1; k < n; k++)
+		f32 lift = 0.0f;
+		for (s32 k = 0; k < bodies; k++)
 		{
-			if (chance(2)) { partyPose(v, s_people[list[k]]); }
-			else { standPose(v, s_people[list[k]], (rand01() - 0.5f) * degToRad(20.0f)); }
-		}
-		return true;
-	}
-
-	// A photobomb: one of them right up at the edge of the frame peeking in,
-	// or leaning in behind the others
-	static bool themePhotobomb(const View& v, const s32* list, s32 n, f32 groupDepth)
-	{
-		Person& p = s_people[list[0]];
-		const bool edge = n < 2 || chance(3) != 0;
-		V3 feet;
-		RSector* sec = nullptr;
-		bool placed = false;
-		const f32 side0 = chance(2) ? -1.0f : 1.0f;
-		for (s32 t = 0; t < 8 && !placed; t++)
-		{
-			const f32 side = (t & 1) ? -side0 : side0;
-			if (edge) { placed = floorSpot(v, side * (0.90f + rand01() * 0.10f), 3.6f + rand01() * 1.2f + (t >> 1) * 1.0f, p.height, &feet, &sec); }
-			else { placed = floorSpot(v, side * rand01() * 0.4f, groupDepth + 2.5f + rand01() * 1.5f, p.height, &feet, &sec); }
-			if (placed)
+			const s32 i = list[k];
+			if (!placeAt(v, i, (rand01() - 0.5f) * 0.16f, depth + (rand01() - 0.5f) * 0.6f, lift, 0.1f)) { continue; }
+			if (!doPose(v, s_people[i], (k == 0 || chance(2)) ? ACT_FLOP : ACT_FALL, (rand01() - 0.5f) * c_pi))
 			{
-				// (their face in the photo, not just a shoulder)
-				f32 x, y, z;
-				project(v, feet + up(p.height * 0.85f), &x, &y, &z);
-				placed = z > 0.15f && y <= c_gpFitUp && y >= -c_gpFitDown;
+				s_gpPlaced[i] = false;
+				pc_hide(s_people[i].obj);
+				continue;
 			}
+			lift += 0.7f + rand01() * 0.4f;
 		}
-		if (!placed) { return false; }
-		pc_unhide(p.obj);
-		movePerson(p, feet, sec);
-		s_gpBomber = p.obj;
-		s32 anim = -1, frame = 0;
-		const s32 r = randInt(3);
-		f32 yaw = headingTo(feet, v.pos);
-		if (r == 0) { pickAction(p.obj, ANIM_PAIN, -1, &anim, &frame); yaw += (rand01() - 0.5f) * degToRad(20.0f); }
-		else if (r == 1) { pickAction(p.obj, ANIM_ATTACK1, -1, &anim, &frame); yaw += sideways(); }
-		else { pickPose(p.obj, POSE_IDLE, &anim, &frame); yaw += (rand01() - 0.5f) * degToRad(40.0f); }
-		pc_setPose(p.obj, yaw, anim, frame);
-		for (s32 k = 1; k < n; k++)
+		// (crowded round it, jumping about, some turned to it)
+		const s32 m = min(n - bodies, 5);
+		const f32 spread = 0.12f + 0.07f * f32(m);
+		row(v, list + bodies, m, -spread, spread, depth + 1.8f, 0.8f, [&](s32, f32 fx, f32* lift, f32* turn)
 		{
-			if (chance(3)) { partyPose(v, s_people[list[k]]); }
-			else { standPose(v, s_people[list[k]], (rand01() - 0.5f) * degToRad(14.0f)); }
-		}
-		RIGDBG("photobomb %s at %.1f %.1f %.1f\n", edge ? "edge" : "behind", feet.x, feet.y, feet.z);
-		return true;
+			if (chance(3)) { *turn = (fx < 0.0f ? -1.0f : 1.0f) * degToRad(60.0f); return s32(ACT_STRUT); }
+			if (chance(3)) { return s32(ACT_STAND); }
+			*lift = chance(2) ? 0.6f + rand01() * 1.4f : 0.0f;
+			return s32(ACT_CHEER);
+		});
 	}
 
-	// Shots and blasts: none near the lens or in front of a face; with
-	// fireworks, those over their heads stay
-	static void groupHideShots(const View& v, f32 groupDepth)
+	// A totem: one standing on another's head (or on their shoulders, under
+	// a low ceiling), the camera turned to take in the two of them
+	static bool themeTotem(View& v, const s32* list, s32 n)
 	{
-		f32 topY = 1e9f;
-		for (s32 i = 0; i < s_peopleCount; i++) { if (s_people[i].inFrame) { topY = minf(topY, s_people[i].head.y); } }
+		const s32 bi = list[0], ti = list[1];
+		Person& base = s_people[bi];
+		Person& top = s_people[ti];
+		const f32 fx = (rand01() - 0.5f) * 0.3f;
+		const V3 cam = s_camPos;
+		const f32 yaw = s_camYaw;
+		for (s32 t = 0; t < 8; t++)
+		{
+			const f32 depth = 10.0f + 2.0f * f32(t & 3);
+			const bool shoulders = t >= 4;
+			v = viewAt(cam, yaw, 0.0f);
+			if (!placeAt(v, bi, fx, depth, 0.0f, 0.5f)) { continue; }
+			RSector* sec = base.obj->sector;
+			for (s32 k = 0; k < s_poseCount; k++) { if (s_poses[k].obj == base.obj && s_poses[k].sector) { sec = s_poses[k].sector; } }
+			const f32 room = sec ? base.pos.y - fixed16ToFloat(sec->ceilingHeight) - top.height - 0.2f : 0.0f;
+			const f32 lift = minf(base.height * (shoulders ? 0.45f : 0.86f), room);
+			// (aimed at the middle of the two)
+			const V3 mid = base.pos + up(0.5f * (base.height * 0.3f + lift + top.height * 0.9f));
+			const V3 d = mid - cam;
+			const f32 pitch = clampf(atan2f(-d.y, maxf(lenXZ(d), 0.1f)), -c_gpPitchMax, c_gpPitchMax);
+			v = viewAt(cam, yaw, pitch);
+			f32 x, y, z, yl;
+			project(v, base.pos + up(base.height * 0.3f), &x, &yl, &z);
+			project(v, base.pos + up(lift + top.height * 0.9f), &x, &y, &z);
+			const bool fits = sec && lift >= base.height * 0.4f && y <= c_gpFitUp && yl >= -c_gpFitDown - 0.1f && z > 1.0f;
+			RIGDBG("totem depth %.1f lift %.2f pitch %.1f top %.2f low %.2f\n", depth, lift, pitch * 180.0f / c_pi, y, yl);
+			if (!fits) { s_gpPlaced[bi] = false; continue; }
+			pc_place(cam, yaw, pitch, nullptr);
+			// (in front of the head they stand on, or behind the shoulders they sit on)
+			const V3 topFeet = base.pos + up(lift) + flatDir(v.yaw) * (lift > base.height * 0.7f ? -0.05f : 0.3f);
+			pc_unhide(top.obj);
+			movePerson(top, topFeet, sec);
+			s_gpPlaced[ti] = true;
+			if (!doPose(v, base, ACT_STAND) || !doPose(v, top, chance(2) ? ACT_CHEER : ACT_STAND)) { return false; }
+			// (the others round them, either side)
+			const s32 m = min(n - 2, 5);
+			for (s32 k = 0; k < m; k++)
+			{
+				const f32 side = (k & 1) ? 1.0f : -1.0f;
+				const f32 rfx = fx + side * (0.2f + 0.14f * f32(k / 2));
+				f32 lift2 = 0.0f;
+				const s32 act = crowdPick(&lift2, 0.4f);
+				placePosed(v, list[2 + k], rfx, z + (rand01() - 0.5f) * 1.2f, lift2, act);
+			}
+			return true;
+		}
+		v = viewAt(cam, yaw, s_camPitch);
+		return false;
+	}
+
+	// Everyone jumping for joy, fireworks over them now and then
+	static void themeJump(const View& v, const s32* list, s32 n)
+	{
+		const s32 count = min(n, 6);
+		const f32 spread = (count == 1) ? 0.0f : 0.14f + 0.09f * f32(count);
+		row(v, list, count, -spread, spread, 6.5f + 0.3f * f32(count), 1.0f, [&](s32 k, f32, f32* lift, f32*)
+		{
+			*lift = (k & 1) ? 0.5f + rand01() * 0.8f : 1.2f + rand01() * 1.4f;
+			if (chance(5)) { *lift = 0.0f; return s32(ACT_STAND); }
+			return chance(4) ? s32(ACT_STRUT) : s32(ACT_CHEER);
+		});
+	}
+
+	// A class photo gone wrong: a tidy line, but one turned away, one
+	// jumping, one flat out in front of them
+	static void themeClass(const View& v, const s32* list, s32 n)
+	{
+		const s32 count = min(n, 7);
+		const f32 depth = 6.0f + 0.5f * f32(count);
+		const s32 back = randInt(count), jump = randInt(count);
+		const s32 flop = (count >= 4 && chance(2)) ? randInt(count) : -1;
+		row(v, list, count, -0.62f, 0.62f, depth, 0.3f, [&](s32 k, f32, f32* lift, f32*)
+		{
+			if (k == flop) { return s32(ACT_STAND); }
+			if (k == back) { return s32(ACT_BACK); }
+			if (k == jump) { *lift = 1.0f + rand01(); return s32(ACT_CHEER); }
+			return chance(3) ? s32(ACT_CHEER) : s32(ACT_STAND);
+		});
+		if (flop >= 0 && placeAt(v, list[flop], (rand01() - 0.5f) * 0.3f, depth - 2.5f, 0.0f, 0.1f))
+		{
+			if (!doPose(v, s_people[list[flop]], ACT_FLOP, (rand01() - 0.5f) * c_pi)) { s_gpPlaced[list[flop]] = false; pc_hide(s_people[list[flop]].obj); }
+		}
+	}
+
+	// A face-off: two side on, nose to nose mid-stride (a dance-off),
+	// the others cheering behind
+	static void themeDuel(const View& v, const s32* list, s32 n)
+	{
+		const f32 depth = 6.0f + rand01() * 1.0f;
+		bool both = placeAt(v, list[0], -0.17f, depth, 0.0f) && placeAt(v, list[1], 0.17f, depth, 0.0f);
+		for (s32 k = 0; k < 2 && both; k++)
+		{
+			Person& p = s_people[list[k]];
+			const Person& o = s_people[list[1 - k]];
+			s32 anim = -1, frame = 0;
+			if (!pickAction(p.obj, ANIM_MOVE, -1, &anim, &frame)) { both = false; break; }
+			pc_setPose(p.obj, headingTo(p.pos, o.pos), anim, frame);
+		}
+		if (!both)
+		{
+			for (s32 k = 0; k < 2; k++) { if (s_gpPlaced[list[k]]) { s_gpPlaced[list[k]] = false; pc_hide(s_people[list[k]].obj); } }
+			themeHuddle(v, list, n);
+			return;
+		}
+		const s32 m = min(n - 2, 5);
+		const f32 spread = 0.08f + 0.08f * f32(m);
+		row(v, list + 2, m, -spread, spread, depth + 2.8f, 1.0f, [&](s32, f32, f32* lift, f32*) { return crowdPick(lift, 0.5f); });
+	}
+
+	// Shots and blasts in the air: none in the photo, except with fireworks
+	// those over their heads, behind them
+	static void groupHideShots(const View& v, f32 groupDepth, f32 topY, bool fireworks)
+	{
 		forEachObject([&](SecObject* obj)
 		{
 			const s32 kind = objKind(obj);
 			if (kind != KIND_SHOT && kind != KIND_EFFECT) { return; }
 			const V3 pos = fromFixed(obj->posWS) + up(fixed16ToFloat(max(obj->worldHeight, 0)) * 0.5f);
 			const V3 dp = pos - v.pos;
-			const f32 fdp = len(dp);
-			if (fdp < c_gpNear + 1.0f) { pc_hide(obj); return; }
-			if (s_gpTheme == THEME_FIREWORKS && pos.y < topY - 0.5f && dot(dp, v.fwd) > groupDepth - 1.0f) { return; }
-			// (none between the lens and the group, nor among them)
-			if (dot(dp, v.fwd) < groupDepth + 1.5f) { pc_hide(obj); return; }
-			for (s32 i = 0; i < s_peopleCount; i++)
-			{
-				const Person& p = s_people[i];
-				if (!p.inFrame) { continue; }
-				const V3 dh = p.head - v.pos, dm = p.mid - v.pos;
-				const f32 fdh = len(dh);
-				if (fdh < 0.01f || fdp >= fdh + 1.0f) { continue; }
-				if (angleBetween(dp, dh) < p.headR * 2.0f / fdh + 0.03f || angleBetween(dp, dm) < p.bodyR / fdh) { pc_hide(obj); return; }
-			}
+			if (len(dp) < c_gpNear + 1.0f) { pc_hide(obj); return; }
+			// (with fireworks those over their heads stay; no others)
+			if (fireworks && pos.y < topY - 0.5f && dot(dp, v.fwd) > groupDepth - 1.0f) { return; }
+			pc_hide(obj);
 		});
 	}
 
-	// One photo: a camera, a theme, everyone posed
+	// One photo: a camera, a theme, everyone brought in and posed
 	static bool groupPhoto()
 	{
 		s_poseCount = 0;
 		s_hiddenCount = 0;
 		s_extraCount = 0;
-		s_gpBomber = nullptr;
 		for (s32 i = 0; i < s_peopleCount; i++)
 		{
 			Person& p = s_people[i];
 			p.pos = p.homePos; p.head = p.homeHead; p.mid = p.homeMid;
+			p.inFrame = false;
+			s_gpPlaced[i] = false;
 		}
 		s_gpStyle = pickWeighted(c_styleWeights, CAM_STYLES, s_gpStyle);
 		if (!placeGroupCamera()) { return false; }
-		const View v = viewAt(s_camPos, s_camYaw, s_camPitch);
-		// nobody nearer the lens than the group (the dying and the dead too)
+		View v = viewAt(s_camPos, s_camYaw, s_camPitch);
+		// nobody nearer the lens than the group (the dying and the dead too),
+		// unless brought in for the photo
 		forEachObject([&](SecObject* obj)
 		{
 			if (obj == s_playerObject || !(obj->flags & OBJ_FLAG_NEEDS_TRANSFORM)) { return; }
@@ -1500,81 +1592,95 @@ namespace TFE_DarkForces
 			const Measure m = measure(obj);
 			if (len(m.mid - v.pos) < c_gpNear) { pc_hide(obj); }
 		});
+		// the ones in the photo: the nearest that can be posed
 		static s32 list[c_gpMaxPersons];
-		f32 groupDepth = 10.0f;
-		s32 n = inFramePeople(v, list, c_gpMaxPersons, &groupDepth);
-		// (and anyone in front of the group with their head out of the frame:
-		// only a big piece of them would be in it)
+		s32 n = 0;
+		for (s32 i = 0; i < s_peopleCount && n < 7; i++) { if (objValid(s_people[i].obj)) { list[n++] = i; } }
+		if (n == 0) { return false; }
+		// (in a new order each time, so the jumper isn't always the same one)
+		for (s32 k = n - 1; k > 0; k--) { const s32 j = randInt(k + 1); std::swap(list[k], list[j]); }
+
+		s32 theme = THEME_HUDDLE;
+		for (s32 t = 0; t < 12; t++)
+		{
+			theme = pickWeighted(c_themeWeights, THEMES, s_gpTheme);
+			if (theme != s_gpThemeBefore && n >= c_themeLeast[theme]) { break; }
+			theme = THEME_HUDDLE;
+		}
+	#ifdef IOS_CAMERA_RIG_DEBUG
+		if (getenv("CAMTEST_THEME")) { theme = atoi(getenv("CAMTEST_THEME")); if (n < c_themeLeast[theme]) { theme = THEME_HUDDLE; } }
+	#endif
+		s_gpThemeBefore = s_gpTheme;
+		s_gpTheme = theme;
+		bool fireworks = false;
+		switch (theme)
+		{
+			case THEME_PEEK: if (!themePeek(v, list, n)) { s_gpTheme = THEME_HUDDLE; themeHuddle(v, list, n); } break;
+			case THEME_PILE: themePile(v, list, n); break;
+			case THEME_TOTEM: if (!themeTotem(v, list, n)) { s_gpTheme = THEME_HUDDLE; for (s32 k = 0; k < n; k++) { s_gpPlaced[list[k]] = false; } themeHuddle(v, list, n); } break;
+			case THEME_JUMP: themeJump(v, list, n); fireworks = randInt(5) < 3; break;
+			case THEME_CLASS: themeClass(v, list, n); break;
+			case THEME_DUEL: themeDuel(v, list, n); break;
+			default: themeHuddle(v, list, n); break;
+		}
+		// where they stand, on average, and the highest head
+		f32 depthSum = 0.0f, topY = 1e9f;
+		s32 placed = 0;
 		for (s32 i = 0; i < s_peopleCount; i++)
 		{
-			const Person& p = s_people[i];
-			if (p.inFrame) { continue; }
+			Person& p = s_people[i];
+			p.inFrame = s_gpPlaced[i];
+			if (!p.inFrame) { continue; }
 			f32 x, y, z;
 			project(v, p.mid, &x, &y, &z);
-			if (z > 0.15f && z < groupDepth + 1.0f && fabsf(x) < 1.6f) { pc_hide(p.obj); }
+			depthSum += z;
+			topY = minf(topY, p.head.y);
+			placed++;
 		}
-		// (anyone well in front of the others joins them, or stays out of it)
+		const f32 groupDepth = placed ? depthSum / f32(placed) : 8.0f;
+		// the rest: out of it if they'd be in the picture in front of or
+		// among the group; farther back, an audience, cheering (never aiming)
+		for (s32 i = 0; i < s_peopleCount; i++)
 		{
-			s32 kept = 0;
-			for (s32 k = 0; k < n; k++)
-			{
-				Person& p = s_people[list[k]];
-				f32 x, y, z;
-				project(v, p.mid, &x, &y, &z);
-				if (n > 1 && z < groupDepth - 3.0f)
-				{
-					V3 feet;
-					RSector* sec;
-					if (floorSpot(v, clampf(x, -0.7f, 0.7f), groupDepth - 1.0f + rand01() * 2.0f, p.height, &feet, &sec)) { movePerson(p, feet, sec); }
-					else { pc_hide(p.obj); p.inFrame = false; continue; }
-				}
-				list[kept++] = list[k];
-			}
-			n = kept;
+			Person& p = s_people[i];
+			if (s_gpPlaced[i] || pc_isHidden(p.obj)) { continue; }
+			f32 x, y, z;
+			project(v, p.mid, &x, &y, &z);
+			if (z <= 0.15f || fabsf(x) > 1.6f || fabsf(y) > 2.0f) { continue; }
+			if (z < groupDepth + 2.0f || !doPose(v, p, chance(2) ? ACT_CHEER : ACT_STAND)) { pc_hide(p.obj); }
 		}
+		// (anyone else in view, not posed, is out of it: they'd be doing
+		// what they were, aiming at the player perhaps)
+		forEachObject([&](SecObject* obj)
+		{
+			if (obj == s_playerObject || !(obj->flags & OBJ_FLAG_NEEDS_TRANSFORM)) { return; }
+			if (!(obj->entityFlags & ETFLAG_AI_ACTOR) || obj->type != OBJ_TYPE_SPRITE || pc_isHidden(obj)) { return; }
+			for (s32 k = 0; k < s_poseCount; k++) { if (s_poses[k].obj == obj) { return; } }
+			f32 x, y, z;
+			project(v, fromFixed(obj->posWS) + up(3.0f), &x, &y, &z);
+			if (z > 0.15f && fabsf(x) < 1.5f && fabsf(y) < 2.0f) { pc_hide(obj); }
+		});
 		// (and no bodies or things lying about in front of them)
 		forEachObject([&](SecObject* obj)
 		{
 			if (obj == s_playerObject || !(obj->flags & OBJ_FLAG_NEEDS_TRANSFORM)) { return; }
 			if (!(obj->entityFlags & (ETFLAG_CORPSE | ETFLAG_PICKUP)) || (obj->entityFlags & ETFLAG_AI_ACTOR)) { return; }
-			if (dot(fromFixed(obj->posWS) - v.pos, v.fwd) < groupDepth - 1.0f) { pc_hide(obj); }
+			if (dot(fromFixed(obj->posWS) - v.pos, v.fwd) < groupDepth + 1.0f) { pc_hide(obj); }
 		});
-		// a theme they are enough for, not one of the last two
-		s32 theme = THEME_PARTY;
-		for (s32 t = 0; t < 12; t++)
-		{
-			theme = pickWeighted(c_themeWeights, THEMES, s_gpTheme);
-			if (theme != s_gpThemeBefore && n >= c_themeLeast[theme]) { break; }
-			theme = THEME_PARTY;
-		}
+		if (fireworks && placed) { addFirework(v, groupDepth, topY); }
+		groupHideShots(v, groupDepth, topY, fireworks);
 	#ifdef IOS_CAMERA_RIG_DEBUG
-		if (getenv("CAMTEST_THEME")) { theme = atoi(getenv("CAMTEST_THEME")); }
-	#endif
-		s_gpThemeBefore = s_gpTheme;
-		s_gpTheme = theme;
-		f32 topY = 1e9f;
-		for (s32 k = 0; k < n; k++) { topY = minf(topY, s_people[list[k]].head.y); }
-		switch (theme)
+		for (s32 i = 0; i < s_peopleCount; i++)
 		{
-			case THEME_CLASS: themeClass(v, list, n, groupDepth); break;
-			case THEME_CONGA: themeConga(v, list, n, groupDepth); break;
-			case THEME_FLOOR: if (!themeFloor(v, list, n, groupDepth)) { s_gpTheme = THEME_PARTY; themeParty(v, list, n); } break;
-			case THEME_PHOTOBOMB: if (!themePhotobomb(v, list, n, groupDepth)) { s_gpTheme = THEME_PARTY; themeParty(v, list, n); } break;
-			case THEME_FIREWORKS: themeParty(v, list, n); addFirework(v, groupDepth, topY < 1e8f ? topY : s_eye.y); break;
-			default: themeParty(v, list, n); break;
-		}
-		groupHideShots(v, groupDepth);
-	#ifdef IOS_CAMERA_RIG_DEBUG
-		for (s32 k = 0; k < n; k++)
-		{
-			const Person& p = s_people[list[k]];
+			const Person& p = s_people[i];
+			if (!s_gpPlaced[i]) { continue; }
 			f32 x, y, z;
 			project(v, p.mid, &x, &y, &z);
-			RIGDBG("  person %d at %.1f %.1f %.1f proj %.2f %.2f %.2f hidden %d\n", k, p.pos.x, p.pos.y, p.pos.z, x, y, z, pc_isHidden(p.obj) ? 1 : 0);
+			RIGDBG("  person %d at %.1f %.1f %.1f proj %.2f %.2f %.2f\n", i, p.pos.x, p.pos.y, p.pos.z, x, y, z);
 		}
 	#endif
 		s_gpShot++;
-		RIGDBG("group photo %d theme %d style %d people %d posed %d extras %d\n", s_gpShot, s_gpTheme, s_gpStyle, n, s_poseCount, s_extraCount);
+		RIGDBG("group photo %d theme %d style %d people %d placed %d posed %d extras %d\n", s_gpShot, s_gpTheme, s_gpStyle, n, placed, s_poseCount, s_extraCount);
 		return true;
 	}
 
@@ -2212,17 +2318,7 @@ extern "C"
 		const V3 cam = s_camPos;
 		const f32 yaw = s_camYaw, pitch = s_camPitch;
 		RSector* sec = s_camSector;
-		if (!groupPhoto())
-		{
-			pc_place(cam, yaw, pitch, sec);
-			s_poseCount = 0;
-			s_extraCount = 0;
-			const View v = viewAt(cam, yaw, pitch);
-			static s32 list[c_gpMaxPersons];
-			f32 depth;
-			const s32 n = inFramePeople(v, list, c_gpMaxPersons, &depth);
-			themeParty(v, list, n);
-		}
+		if (!groupPhoto()) { pc_place(cam, yaw, pitch, sec); }
 	}
 
 	void IOSSelfie_End(void)

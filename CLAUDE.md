@@ -28,10 +28,13 @@ They own both the original Dark Forces and Nightdive's Dark Forces Remaster
   through `iosCamera_drawWorld` in `mission.cpp`, no weapon or HUD; poses,
   hiding and moves applied only while that view is drawn and put back right
   after, every frame). A selfie (the long press) is a group photo from
-  the player's phone, with no player in it: the nearest enemies turn to
-  the lens and pose in their own sprite frames, a theme per photo (party,
-  photobomb, one on the floor, class line-up, fireworks from the game's
-  own blasts and bolts, conga); nobody about gives "No one around for a
+  the player's phone, with no player in it: the nearest enemies are
+  brought in close and pose in their own sprite frames (never an attack
+  or aim; standing, strutting, death frames as leaps and pratfalls,
+  lifted off the floor), a theme per photo (huddle, a face peeking in
+  at the frame's edge, a pile of bodies, a totem, jumping with the
+  game's own blasts as fireworks, a class photo gone wrong, a face-off);
+  others in view are hidden; nobody about gives "No one around for a
   group photo". Action Freeze and the cinematic burst draw the player as
   HUMAN3.3DO coloured as Kyle.
 - **iOS code:**
