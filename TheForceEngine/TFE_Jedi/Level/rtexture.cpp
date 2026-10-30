@@ -333,6 +333,25 @@ namespace TFE_Jedi
 		return true;
 	}
 
+#ifdef TFE_IOS
+	// iOS: a game-pool bitmap is the game's for good, so it goes in the game's
+	// memory even when it's loaded during a mission (the weapon wheel's fists
+	// icon, the textures of CAMERA's figure), where the allocator is the
+	// level's: that is let go at every level change, and the game pool's list
+	// would then point into it, at whatever the next level puts there (the
+	// GPU renderer packs the game pool's textures again as a level starts,
+	// and crashed on them)
+	struct IosBitmapRegion
+	{
+		MemoryRegion* was;
+		explicit IosBitmapRegion(AssetPool pool) : was(s_texState.memoryRegion)
+		{
+			if (pool == POOL_GAME && s_gameRegion) { s_texState.memoryRegion = s_gameRegion; }
+		}
+		~IosBitmapRegion() { s_texState.memoryRegion = was; }
+	};
+#endif
+
 	TextureData* bitmap_load(const char* name, u32 decompress, AssetPool pool, bool addToCache)
 	{
 		// TFE: Keep track of per-level texture state for serialization.
@@ -342,6 +361,9 @@ namespace TFE_Jedi
 		{
 			return s_textureList[pool][iTex->second].texture;
 		}
+	#ifdef TFE_IOS
+		IosBitmapRegion iosRegion(pool);
+	#endif
 
 		FilePath filepath;
 		if (!TFE_Paths::getFilePath(name, &filepath))

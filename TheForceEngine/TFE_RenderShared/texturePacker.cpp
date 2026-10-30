@@ -1270,6 +1270,30 @@ namespace TFE_Jedi
 		s_texInfoPool.clear();
 		if (getList(s_texInfoPool, pool))
 		{
+		#ifdef TFE_IOS
+			// iOS: a last guard: an entry with nothing behind it to pack is
+			// left out, not followed
+			for (size_t i = 0; i < s_texInfoPool.size();)
+			{
+				const TextureInfo& info = s_texInfoPool[i];
+				bool valid = true;
+				if (info.type == TEXINFO_DF_TEXTURE_DATA || info.type == TEXINFO_DF_DELT_TEX)
+				{
+					valid = info.texData != nullptr;
+					if (valid && info.texData->uvWidth == BM_ANIMATED_TEXTURE)
+					{
+						const AnimatedTexture* anim = (const AnimatedTexture*)info.texData->image;
+						valid = anim && anim->frameList && anim->frameList[0] && anim->baseFrame;
+					}
+				}
+				else if (info.type == TEXINFO_DF_ANIM_TEX)
+				{
+					valid = info.animTex && info.animTex->frameList && info.animTex->frameList[0] && info.animTex->baseFrame;
+				}
+				if (valid) { i++; }
+				else { s_texInfoPool.erase(s_texInfoPool.begin() + i); }
+			}
+		#endif
 			s32 count = (s32)s_texInfoPool.size();
 			TextureInfo* list = s_texInfoPool.data();
 			// 1. Calculate the sort key (uses the area metric).

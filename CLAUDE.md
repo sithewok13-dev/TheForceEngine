@@ -70,6 +70,10 @@ They own both the original Dark Forces and Nightdive's Dark Forces Remaster
     `iosAngle.cpp/.h` (OpenGL ES 3.0 context from ANGLE on SDL's Metal view; the
     `SDL_GL_*` calls in the render backend become these), `iosApp.h`,
     `build-deps.sh` (SDL2 + SDL2_image for iOS), `toolchain.cmake`.
+  - Game-pool bitmaps (the wheel's fists icon, CAMERA's figure) are allocated
+    in the game's memory even when loaded mid-mission (`rtexture.cpp`): in the
+    level's they went stale at the next level change and the GPU renderer's
+    packing crashed on them.
   - Engine changes are `#ifdef TFE_IOS` (app, paths, defaults, touch menus) or
     `#ifdef TFE_GLES` (OpenGL ES 3.0 path in `TFE_RenderBackend/Win32OpenGL`:
     shims at the end of `gl.h`, glad loads all entry points, shader header in

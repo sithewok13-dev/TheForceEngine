@@ -784,7 +784,8 @@ namespace TFE_DarkForces
 		s_tPrev = SDL_GetTicks() / 1000.0;
 		s_tStart = s_tPrev;
 		s_played = 0.0;
-		IOSTouch_ShowMessage("AUTOPLAY: tap anywhere to stop", 2.5);
+		// (nothing on screen: the show is for clean recordings; the panel
+		// says a tap stops it)
 		nextLevel();
 	}
 
