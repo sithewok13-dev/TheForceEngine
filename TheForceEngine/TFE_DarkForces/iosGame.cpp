@@ -411,6 +411,10 @@ namespace TFE_DarkForces
 
 		SDL_Window* window = SDL_GetKeyboardFocus();
 		if (!window) { window = SDL_GetMouseFocus(); }
+		// (AUTOPLAY's CONTROLS ON: what the autopilot does, shown as thumbs)
+		IOSAutoplayDisplay autoplayDisplay;
+		iosAutoplay_display(&autoplayDisplay);
+		IOSTouch_SetAutoplayDisplay(&autoplayDisplay);
 		const int requests = IOSTouch_Update(window, mode, &hud, framesDrawn);
 		s_mode = mode;
 
@@ -499,10 +503,17 @@ namespace TFE_DarkForces
 		s_heldPrev = in.ulButtons;
 		if (in.iSelectWeapon >= 1 && in.iSelectWeapon <= WPN_COUNT)
 		{
-			inputMapping_setStatePress(InputAction(IADF_WEAPON_1 + in.iSelectWeapon - 1));
+			inputMapping_setStatePress(InputAction(iosGame_weaponKey(in.iSelectWeapon - 1)));
 		}
 
 		if (playerThere()) { applyCheat(IOSTouch_CheatBits(), newWorld); }
+	}
+
+	s32 iosGame_weaponKey(s32 weapon)
+	{
+		if (weapon == WPN_MORTAR) { return IADF_WEAPON_8; }
+		if (weapon == WPN_MINE) { return IADF_WEAPON_7; }
+		return IADF_WEAPON_1 + weapon;
 	}
 
 	void iosGame_takeLook(s32* dx, s32* dy)

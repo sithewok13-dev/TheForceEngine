@@ -1,33 +1,36 @@
 #ifdef TFE_IOS
 //////////////////////////////////////////////////////////////////////
 // iOS: AUTOPLAY (MENU's tray), a self-playing show of Dark Forces for
-// screen recordings: Kyle fights on autopilot, cutting from one of a
-// level's biggest fights to the next.
+// screen recordings: one fight, Kyle on autopilot, for as long as TIME
+// says.
 //
 // START saves the game as it is ("Before AUTOPLAY"), then loads a level
 // (the one picked, or one of them shuffled) at AUTOPLAY's difficulty,
 // straight in: no briefing, no cutscene, nothing of the agent's progress
-// saved. As a level starts, its enemies are grouped by where they stand
-// (close together, in sight of each other) and the biggest groups go
-// first. Each scene: Kyle appears near the next group, somewhere safe
-// (solid floor with room round him, no water, pit, door or lift, out of
-// their sight where there's such a place, a straight walk from them)
-// and facing them; the group gets copies of its own kinds around it
-// (CROWD), everyone about is woken (ALARM), and he fights until the
-// scene's time is up or the group is down. Once every area has had its
-// scene: another level (SHUFFLE ALL), or the level's areas again in
-// another order (PICK ONE). God mode and full ammo throughout. A tap
-// anywhere ends it and loads the save back: the game as it was.
+// saved. Its enemies are grouped by where they stand (close together, in
+// sight of each other) and ranked by size and light, and one of the top
+// few is picked at random, so each show differs. Kyle appears near it,
+// somewhere safe (solid floor with room round him, no water, pit, door or
+// lift) with a clear view of several of them and open space ahead,
+// facing them; the group gets copies of its own kinds around it (CROWD)
+// and everyone about is woken (ALARM). Once the group is down, more of
+// its kinds come in from out of his sight and come at him (within the
+// caps); with nothing to copy, he goes after the nearest left in the
+// level. If he gets lost (a trench, a shaft, wandered off, stuck) he is
+// put back near the group. God mode and full ammo throughout. When TIME
+// is up (counting only while it plays), or at a tap anywhere, it ends and
+// loads the save back: the game as it was.
 //
-// The autopilot plays as a player would: its stick, buttons and weapon
+// The autopilot plays as a person would: its stick, buttons and weapon
 // picks go into the game's input mapping as the touch controls' do, and
-// its turning into the mouse motion (iosGame.cpp). It turns to the
-// nearest enemy in sight, walks to a fighting distance for the weapon in
-// hand and strafes from side to side, firing once on target (the game's
-// auto-aim does the rest); it changes weapon now and then among those
-// ticked, throws thermal detonators at bunches, keeps off ledges, pits
-// and water, and when it isn't getting anywhere it strafes the other way,
-// turns or jumps.
+// its turning into the mouse motion (iosGame.cpp). The view turns on a
+// spring, with a moment to react to a new face, an aim that wanders a
+// little and settles before it fires; it keeps a fighting distance for
+// the weapon in hand with varied footwork on an eased stick, fires in
+// bursts with a short tail, glances about when no one is in sight,
+// changes weapon only in lulls, throws thermal detonators at bunches,
+// keeps off ledges, pits and water, and when it isn't getting anywhere
+// tries other footwork, or turns away and hops.
 //
 // Lengths are Dark Forces units (the eyes 5.8 above the feet), angles
 // radians; world Y points down ("up" is -Y), as the game's.
@@ -53,6 +56,7 @@
 #include <SDL.h>
 #include <math.h>
 #include <string.h>
+#include <stdlib.h>
 #include <vector>
 #include <unordered_map>
 #include <algorithm>
@@ -81,12 +85,11 @@ namespace TFE_DarkForces
 	static const f32 c_eyeHeight = 5.8f;
 	static const char* c_saveFile = "autoplay.tfe";	// (in the game's saves: "Before AUTOPLAY")
 
-	// The scenes
+	// The fight
 	static const f32 c_alarmRange = 70.0f;	// woken around a group, and counted for CROWD's cap
 	static const f32 c_downRange = 55.0f;	// a group is down when no one is left this close to where it was
 	static const s32 c_crowdCap = 36;		// CROWD adds copies only while fewer enemies than this are about
-	static const s32 c_copiesPerLevel = 160;	// ...and no more than this many in one level
-	static const f32 c_visitedRange = 40.0f;	// an area that has had its scene
+	static const s32 c_copiesPerLevel = 400;	// ...and no more than this many in one level (most long dead)
 
 	static inline f32 clampf(f32 v, f32 lo, f32 hi) { return v < lo ? lo : (v > hi ? hi : v); }
 	static inline f32 minf(f32 a, f32 b) { return a < b ? a : b; }
@@ -524,14 +527,15 @@ namespace TFE_DarkForces
 	//////////////////////////////////////////////////////////////////
 	struct Spot { V3 feet; RSector* sector; f32 yaw; };
 
-	// Room around: the floor walkable a little way every way, level
+	// Room around: the floor walkable a few steps every way, level (no ledge
+	// close by to slip off)
 	static bool roomAround(V3 feet, RSector* sec)
 	{
 		for (s32 k = 0; k < 8; k++)
 		{
 			const f32 a = f32(k) * c_pi * 0.25f;
 			RSector* end = nullptr;
-			if (!walkFloor(feet, sec, feet.x + sinf(a) * 2.8f, feet.z + cosf(a) * 2.8f, 1.0f, &end)) { return false; }
+			if (!walkFloor(feet, sec, feet.x + sinf(a) * 5.0f, feet.z + cosf(a) * 5.0f, 1.0f, &end)) { return false; }
 			if (fabsf(floorOf(end) - feet.y) > 1.0f) { return false; }
 		}
 		return true;
@@ -612,9 +616,14 @@ namespace TFE_DarkForces
 	static bool s_reticleHidden = false;	// the crosshair put away (HUD off)
 	static s32 s_agentLevel = 0, s_agentSelected = 0;
 	static std::vector<s32> s_bag;		// SHUFFLE ALL's levels still to come
-	static std::vector<V3> s_visited;	// the areas that have had their scene
 	static s32 s_copies = 0;		// CROWD's copies in this level
+	static Group s_group;			// the show's group, as it was when the scene began
+	static f64 s_tWave = 0.0, s_tReplace = 0.0;	// the next reinforcements, the next putting back allowed
+	static f64 s_tMovedFar = 0.0;		// when Kyle last got somewhere (a few units)
+	static V3 s_farPos;
 	static f64 s_tPrev = 0.0;
+	static f64 s_tStart = 0.0;		// (the rig's log: when the show started)
+	static f64 s_played = 0.0;		// how long the show has played (not loading levels, not in the background)
 
 	// The scene
 	static V3 s_center;
@@ -624,23 +633,39 @@ namespace TFE_DarkForces
 	struct Controls
 	{
 		f32 forward, strafe;
-		bool fire, alt, jump;
+		bool fire, alt, jump, crouch;
 		s32 weapon;		// a weapon to take (WeaponID; -1: none)
 		f32 lookX, lookY;	// mouse counts not handed over yet
 	};
 	static Controls s_ctl;
 	static bool s_firePrev = false, s_altPrev = false;
+	// (CONTROLS ON) the look not shown yet, mouse counts; until when JUMP and
+	// NEXT WPN show lit
+	static f32 s_shownLookX = 0.0f, s_shownLookY = 0.0f;
+	static f64 s_tShowJump = 0.0, s_tShowSwitch = 0.0;
 
 	// The autopilot
 	static SecObject* s_target = nullptr;
 	static V3 s_aim;
-	static f64 s_tScan = 0.0, s_tSeen = 0.0, s_tStrafe = 0.0, s_tBurst = 0.0, s_tPause = 0.0;
-	static f32 s_strafeDir = 1.0f;
+	static f64 s_tScan = 0.0, s_tSeen = 0.0, s_tBurst = 0.0, s_tPause = 0.0;
 	static bool s_burstAlt = false;		// this burst on the other trigger
-	static V3 s_lastPos;
+	static V3 s_lastPos, s_prevFeet;
 	static f64 s_tMoved = 0.0, s_tEvade = 0.0;
 	static f32 s_evadeYaw = 0.0f;
 	static s32 s_stuck = 0;
+	static bool s_targetInSight = false;	// the target seen in the last look round
+	static SecObject* s_noticed = nullptr;	// the target the hand has caught up with
+	static f64 s_tReact = 0.0, s_tSettled = 0.0, s_tFireTail = 0.0, s_tGlance = 0.0, s_tCrouch = 0.0;
+	static V3 s_aimFrom;			// where the hand aims (the target's place, once it has reacted)
+	static f32 s_pitchBias = 0.0f, s_glance = 0.0f;
+	static bool s_tailAlt = false;
+	static f32 s_yawVel = 0.0f, s_pitchVel = 0.0f;	// the hand's turning (radians a second)
+	// footwork (see newFootwork) and the stick as it is now
+	enum Footwork { FW_STRAFE = 0, FW_CIRCLE, FW_DIAGONAL, FW_PAUSE, FW_JUKE };
+	static s32 s_footwork = FW_STRAFE;
+	static f64 s_tFootwork = 0.0;
+	static f32 s_footDir = 1.0f, s_footStrength = 0.8f, s_footIn = 0.0f;
+	static f32 s_axisX = 0.0f, s_axisY = 0.0f;
 	static std::vector<s32> s_seen;		// s_foes in sight
 	// Weapons
 	static std::vector<s32> s_rotation;	// the weapons it goes round
@@ -686,7 +711,7 @@ namespace TFE_DarkForces
 
 	static void goToLevel(s32 level)
 	{
-		APDBG("level %d\n", level);
+		APDBG("LEVEL %d at %.1f s\n", level, SDL_GetTicks() / 1000.0 - s_tStart);
 		s_requested = level;
 		s_stage = ST_TRAVEL;
 		s_tStage = SDL_GetTicks() / 1000.0;
@@ -740,8 +765,9 @@ namespace TFE_DarkForces
 		s_opt = *options;
 		s_opt.iDifficulty = max(0, min(2, s_opt.iDifficulty));
 		s_opt.iCrowd = max(1, min(3, s_opt.iCrowd));
-		s_opt.iSceneSeconds = max(5, min(600, s_opt.iSceneSeconds));
+		s_opt.iShowSeconds = max(5, min(3600, s_opt.iShowSeconds));
 		s_opt.ulWeapons &= IOSAUTOPLAY_WEAPONS_ALL;
+		s_opt.bControls = s_opt.bControls ? 1 : 0;
 		if (!s_opt.ulWeapons) { s_opt.ulWeapons = IOSAUTOPLAY_WEAPONS_ALL; }
 		if (s_opt.iLevel < 0 || s_opt.iLevel > s_maxLevelIndex) { s_opt.iLevel = 0; }
 		makeRotation();
@@ -754,9 +780,10 @@ namespace TFE_DarkForces
 
 		s_on = true;
 		s_bag.clear();
-		s_visited.clear();
 		s_world = IOSCheatGame_World();
 		s_tPrev = SDL_GetTicks() / 1000.0;
+		s_tStart = s_tPrev;
+		s_played = 0.0;
 		IOSTouch_ShowMessage("AUTOPLAY: tap anywhere to stop", 2.5);
 		nextLevel();
 	}
@@ -806,6 +833,40 @@ namespace TFE_DarkForces
 		return n;
 	}
 
+	// A copy of an enemy (its sprite, its kind; droids at their height above
+	// the floor) standing at p
+	static SecObject* spawnCopy(JediWax* wax, s32 kind, V3 p, RSector* sec, f32 lift)
+	{
+		SecObject* copy = allocateObject();
+		if (!copy) { return nullptr; }
+		copy->posWS.x = floatToFixed16(p.x);
+		copy->posWS.y = floatToFixed16(p.y + lift);
+		copy->posWS.z = floatToFixed16(p.z);
+		copy->yaw = toAngle14(rand01() * 2.0f * c_pi);
+		sector_addObject(sec, copy);
+		sprite_setData(copy, wax);
+		obj_setEnemyLogic(copy, KEYWORD(kind));
+		s_copies++;
+		return copy;
+	}
+
+	// The group's kinds, that copies are made of (its crowd, and those
+	// that come in once it's down)
+	struct Kin { JediWax* wax; s32 kind; f32 lift; };
+	static std::vector<Kin> s_kins;
+	static void noteKinds(V3 center)
+	{
+		s_kins.clear();
+		for (const Foe& f : s_foes)
+		{
+			if (lenXZ(f.pos - center) > 30.0f || fabsf(f.pos.y - center.y) > 16.0f) { continue; }
+			const s32 kind = copyKind(f.kind);
+			if (kind < 0 || f.obj->type != OBJ_TYPE_SPRITE || !f.obj->wax) { continue; }
+			Kin k = { f.obj->wax, kind, f.pos.y - floorOf(f.obj->sector) };
+			s_kins.push_back(k);
+		}
+	}
+
 	// CROWD: copies of the group's own kinds around each of them, while the
 	// area has fewer than c_crowdCap
 	static void addCopies(V3 center, V3 kyle)
@@ -839,22 +900,56 @@ namespace TFE_DarkForces
 					for (const V3& t : taken) { if (lenXZ(t - p) < 3.0f && fabsf(t.y - p.y) < 8.0f) { clear = false; break; } }
 					if (!clear) { continue; }
 
-					SecObject* copy = allocateObject();
-					if (!copy) { return; }
-					copy->posWS.x = floatToFixed16(p.x);
-					copy->posWS.y = floatToFixed16(p.y + lift);
-					copy->posWS.z = floatToFixed16(p.z);
-					copy->yaw = toAngle14(rand01() * 2.0f * c_pi);
-					sector_addObject(sec, copy);
-					sprite_setData(copy, f.obj->wax);
-					obj_setEnemyLogic(copy, KEYWORD(kind));
+					if (!spawnCopy(f.obj->wax, kind, p, sec, lift)) { return; }
 					taken.push_back(p);
 					around++;
-					s_copies++;
 					break;
 				}
 			}
 		}
+	}
+
+	// The group down before the time is up: more of its kinds come in, from
+	// out of Kyle's sight round the area (doorways, round corners), woken
+	// and coming at him; as many as the group had (times CROWD), within the
+	// caps. How many came.
+	static s32 reinforce(V3 kyle)
+	{
+		if (s_kins.empty() || !s_group.sector) { return 0; }
+		collectFoes();
+		s32 around = foesAround(s_center, c_alarmRange);
+		const s32 wanted = max(3, min(12, s_group.count * s_opt.iCrowd));
+		const V3 eye = fromFixed(s_eyePos);
+		RSector* eyeSec = sectorAt(eye, s_playerObject->sector);
+		std::vector<V3> taken;
+		for (const Foe& f : s_foes) { taken.push_back(f.pos); }
+		s32 n = 0;
+		for (s32 tries = 0; tries < 240 && n < wanted; tries++)
+		{
+			if (around >= c_crowdCap || s_copies >= c_copiesPerLevel) { break; }
+			const f32 a = rand01() * 2.0f * c_pi, r = randRange(14.0f, 48.0f);
+			const f32 x = s_center.x + sinf(a) * r, z = s_center.z + cosf(a) * r;
+			RSector* sec = sectorUnder(x, s_group.anchor.y - 7.0f, z);
+			if (!sec || !safeSector(sec, false) || floorOf(sec) - ceilOf(sec) < 9.0f) { continue; }
+			const V3 p = v3(x, floorOf(sec), z);
+			if (fabsf(p.y - s_group.anchor.y) > 8.0f || lenXZ(p - kyle) < 16.0f) { continue; }
+			// (the same place as the group: a walk from it)
+			if (!walkFloor(s_group.anchor, s_group.sector, x, z, 10.0f, nullptr, 6.0f)) { continue; }
+			// (out of his sight, unless that can't be found)
+			const bool seen = eyeSec && sees(eye, eyeSec, p + up(4.0f));
+			if (seen && (tries < 160 || lenXZ(p - kyle) < 26.0f)) { continue; }
+			bool clear = true;
+			for (const V3& t : taken) { if (lenXZ(t - p) < 3.0f && fabsf(t.y - p.y) < 8.0f) { clear = false; break; } }
+			if (!clear) { continue; }
+			const Kin& k = s_kins[randInt(s32(s_kins.size()))];
+			SecObject* copy = spawnCopy(k.wax, k.kind, p, sec, k.lift);
+			if (!copy) { break; }
+			actor_sendWakeupMsg(copy);
+			taken.push_back(p);
+			around++;
+			n++;
+		}
+		return n;
 	}
 
 	// ALARM: everyone around woken, and hunting
@@ -869,15 +964,6 @@ namespace TFE_DarkForces
 		}
 	}
 
-	static bool visited(V3 c)
-	{
-		for (const V3& v : s_visited)
-		{
-			if (lenXZ(v - c) < c_visitedRange && fabsf(v.y - c.y) < 24.0f) { return true; }
-		}
-		return false;
-	}
-
 	static void pickWeapon(s32 notThis)
 	{
 		s32 id = s_rotation[randInt(s32(s_rotation.size()))];
@@ -888,8 +974,33 @@ namespace TFE_DarkForces
 		s_weapon = id;
 	}
 
-	// The next scene: the biggest group whose area hasn't had one, Kyle
-	// near it, its crowd and its alarm
+	// The autopilot starts afresh (Kyle just placed at feet)
+	static void resetPilot(f64 now, V3 feet)
+	{
+		clearControls();
+		s_target = nullptr;
+		s_seen.clear();
+		s_tScan = 0.0;
+		s_tSeen = now;
+		s_lastPos = s_prevFeet = feet;
+		s_tMoved = s_tMovedFar = now;
+		s_farPos = feet;
+		s_tEvade = 0.0;
+		s_stuck = 0;
+		s_throws = 0;
+		s_tBurst = s_tPause = now;
+		s_noticed = nullptr;
+		s_tReact = s_tSettled = s_tFireTail = s_tCrouch = 0.0;
+		s_tFootwork = now;
+		s_tGlance = now + randRange(0.8f, 2.0f);
+		s_glance = 0.0f;
+		s_axisX = s_axisY = 0.0f;
+		s_yawVel = s_pitchVel = 0.0f;
+	}
+
+	// The show's one scene: one of the level's best groups (by size and
+	// light), picked at random among the top few so each show differs; Kyle
+	// placed near it, its crowd, its alarm
 	static void startScene(f64 now)
 	{
 		collectFoes();
@@ -898,27 +1009,35 @@ namespace TFE_DarkForces
 		makeGroups(groups);
 		APDBG("groups: %d foes, %d groups, biggest %d %d %d %d\n", (int)s_foes.size(), (int)groups.size(),
 			groups.size() > 0 ? groups[0].count : 0, groups.size() > 1 ? groups[1].count : 0, groups.size() > 2 ? groups[2].count : 0, groups.size() > 3 ? groups[3].count : 0);
+		// (the top four weighted 4, 3, 2, 1, in a random order by those
+		// weights; then the rest by rank)
 		std::vector<s32> order;
-		for (s32 i = 0; i < s32(groups.size()); i++) { if (!visited(groups[i].center)) { order.push_back(i); } }
-		if (order.empty())
+		std::vector<s32> top;
+		for (s32 i = 0; i < min(4, s32(groups.size())); i++) { top.push_back(i); }
+		while (!top.empty())
 		{
-			if (s_opt.iLevel == 0) { nextLevel(); return; }
-			// PICK ONE: the level's areas again, in another order
-			s_visited.clear();
-			for (s32 i = 0; i < s32(groups.size()); i++) { order.push_back(i); }
-			for (s32 i = s32(order.size()) - 1; i > 0; i--) { std::swap(order[i], order[randInt(i + 1)]); }
+			s32 total = 0;
+			for (s32 i : top) { total += 4 - i; }
+			s32 r = randInt(total), k = 0;
+			while (r >= 4 - top[k]) { r -= 4 - top[k]; k++; }
+			order.push_back(top[k]);
+			top.erase(top.begin() + k);
 		}
+		for (s32 i = 4; i < s32(groups.size()); i++) { order.push_back(i); }
+	#ifdef IOS_AUTOPLAY_RIG_DEBUG
+		if (getenv("APTEST_RANK")) { order.insert(order.begin(), atoi(getenv("APTEST_RANK"))); }
+	#endif
 		for (s32 gi : order)
 		{
 			const Group& g = groups[gi];
-			s_visited.push_back(g.center);
 			Spot spot;
 			if (!g.sector || !findSpot(g, &spot)) { continue; }
 
-			APDBG("scene found in %.1f ms\n", f64(SDL_GetTicks()) - now * 1000.0);
-			APDBG("scene: group of %d at %.1f %.1f %.1f, Kyle at %.1f %.1f %.1f\n", g.count, g.center.x, g.center.y, g.center.z,
-				spot.feet.x, spot.feet.y, spot.feet.z);
+			APDBG("SCENE at %.1f s: group of %d at %.1f %.1f %.1f (rank %d), Kyle at %.1f %.1f %.1f\n", now - s_tStart, g.count,
+				g.center.x, g.center.y, g.center.z, gi, spot.feet.x, spot.feet.y, spot.feet.z);
 			player_iosPlace(spot.sector, floatToFixed16(spot.feet.x), floatToFixed16(spot.feet.z), toAngle14(spot.yaw));
+			s_group = g;
+			noteKinds(g.center);
 			addCopies(g.center, spot.feet);
 			if (s_opt.bAlarm)
 			{
@@ -930,20 +1049,8 @@ namespace TFE_DarkForces
 			s_tScene = now;
 			s_tDown = 0.0;
 			s_tCheck = now + 1.0;
-			// the autopilot starts afresh
-			clearControls();
-			s_target = nullptr;
-			s_seen.clear();
-			s_tScan = 0.0;
-			s_tSeen = now;
-			s_lastPos = spot.feet;
-			s_tMoved = now;
-			s_tEvade = 0.0;
-			s_stuck = 0;
-			s_throws = 0;
-			s_tBurst = s_tPause = now;
-			s_tStrafe = now + randRange(0.8f, 1.8f);
-			s_strafeDir = randInt(2) ? 1.0f : -1.0f;
+			s_tWave = s_tReplace = now;
+			resetPilot(now, spot.feet);
 			pickWeapon(-1);
 			s_before = s_weapon;
 			s_tSwitch = now + randRange(7.0f, 12.0f);
@@ -994,12 +1101,13 @@ namespace TFE_DarkForces
 			if (d < nearestD) { nearestD = d; nearest = i; }
 			if (f.obj == s_target) { targetD = d; }
 		}
+		s_targetInSight = false;
 		if (nearest >= 0)
 		{
 			// (kept while in sight, unless another is much nearer: no flitting
 			// from one to the next)
 			if (!s_target || targetD > 1e8f || targetD > nearestD * 1.8f + 4.0f) { s_target = s_foes[nearest].obj; targetD = nearestD; }
-			for (s32 i : s_seen) { if (s_foes[i].obj == s_target) { s_aim = s_foes[i].mid; } }
+			for (s32 i : s_seen) { if (s_foes[i].obj == s_target) { s_aim = s_foes[i].mid; s_targetInSight = true; } }
 			s_tSeen = now;
 		}
 		else if (now - s_tSeen > 1.5)
@@ -1028,35 +1136,89 @@ namespace TFE_DarkForces
 		}
 	}
 
-	// Whether the player can go that way (dir, flat) for a little: no
+	// Whether the player can go that way (dir, flat) for a little (as far
+	// as a run carries on once the stick lets go): no
 	// wall, ledge, pit or water
 	static bool canGo(V3 feet, RSector* sec, f32 dx, f32 dz)
 	{
 		RSector* end = nullptr;
-		if (!walkFloor(feet, sec, feet.x + dx * 3.0f, feet.z + dz * 3.0f, 4.0f, &end)) { return false; }
+		if (!walkFloor(feet, sec, feet.x + dx * 6.0f, feet.z + dz * 6.0f, 4.0f, &end)) { return false; }
 		return safeSector(end, false);
 	}
 
-	// Turns the view towards a heading and a pitch (up: > 0), smoothly, as
-	// a player's thumb would: mouse counts for the next frames
-	static void turnTowards(f32 yawWanted, f32 pitchWanted, f32 dt, f32 maxRate)
+	// The hand on the mouse. The view turns as a player's hand would turn
+	// it: speeding up and easing in, a touch past the mark and back (a
+	// spring a little under critical damping), never faster than a quick
+	// flick. Pitch the same, slower and steadier.
+	static void steer(f32 yawWanted, f32 pitchWanted, f32 dt, f32 quickness)
 	{
+		const f32 w = quickness, zeta = 0.62f;
 		const f32 yawErr = wrapAngle(yawWanted - fromAngle14(s_playerYaw));
-		f32 step = clampf(yawErr * 10.0f, -maxRate, maxRate) * dt;
-		if (fabsf(step) > fabsf(yawErr)) { step = yawErr; }
+		const f32 acc = clampf(w * w * yawErr - 2.0f * zeta * w * s_yawVel, -70.0f, 70.0f);
+		s_yawVel = clampf(s_yawVel + acc * dt, -6.0f, 6.0f);
 		const f32 sensH = inputMapping_getHorzMouseSensitivity();
+		if (fabsf(sensH) > 1e-3f) { s_ctl.lookX += s_yawVel * dt * c_toAngle14 / (8.0f * sensH); }
+
+		const f32 wp = w * 0.7f, zp = 0.85f;
+		const f32 pitchErr = clampf(pitchWanted, -0.8f, 0.8f) - fromAngle14(s_eyePitch);
+		const f32 pacc = clampf(wp * wp * pitchErr - 2.0f * zp * wp * s_pitchVel, -30.0f, 30.0f);
+		s_pitchVel = clampf(s_pitchVel + pacc * dt, -2.5f, 2.5f);
 		const f32 sensV = inputMapping_getVertMouseSensitivity();
-		if (fabsf(sensH) > 1e-3f) { s_ctl.lookX = step * c_toAngle14 / (8.0f * sensH); }
 		// (mouse counts down look down)
-		const f32 pitchErr = clampf(pitchWanted, -0.9f, 0.9f) - fromAngle14(s_eyePitch);
-		const f32 pstep = clampf(pitchErr * 5.0f, -2.0f, 2.0f) * dt;
-		if (fabsf(sensV) > 1e-3f) { s_ctl.lookY = -pstep * c_toAngle14 / (8.0f * sensV); }
+		if (fabsf(sensV) > 1e-3f) { s_ctl.lookY -= s_pitchVel * dt * c_toAngle14 / (8.0f * sensV); }
+	}
+
+	// A hand's aim is never quite still: a slow wander (up to about 2
+	// degrees) and a faint tremor
+	static f32 s_drift = 0.0f, s_driftVel = 0.0f, s_tremor = 0.0f;
+	static void wobble(f32 dt)
+	{
+		s_driftVel += (randRange(-1.0f, 1.0f) * 0.35f - s_drift * 1.6f - s_driftVel * 0.8f) * dt;
+		s_drift = clampf(s_drift + s_driftVel * dt, -0.035f, 0.035f);
+		s_tremor += (randRange(-1.0f, 1.0f) * 0.004f - s_tremor) * minf(1.0f, dt * 12.0f);
 	}
 
 	static void takeWeapon(s32 id)
 	{
 		s_weapon = id;
 		s_tAsked = 0.0;
+	}
+
+	// How it moves: a few kinds of footwork, each for a while of its own
+	// length (never on a beat): strafing one way, circling the target,
+	// stepping in or back on a diagonal, a short pause, a quick juke. The
+	// stick eases towards what they want, as a held key's run picks up and
+	// dies down.
+	static void newFootwork(f64 now, bool fighting)
+	{
+		const s32 r = randInt(100);
+		const f32 was = s_footDir;
+		s_footDir = randInt(3) ? -was : was;	// (mostly the other way)
+		s_footIn = 0.0f;
+		if (!fighting)
+		{
+			s_footwork = FW_STRAFE;
+			s_footStrength = 0.0f;
+			s_tFootwork = now + randRange(0.5f, 1.2f);
+			return;
+		}
+		if (r < 34)      { s_footwork = FW_STRAFE;   s_footStrength = randRange(0.55f, 1.0f); s_tFootwork = now + randRange(0.5f, 2.2f); }
+		else if (r < 58) { s_footwork = FW_CIRCLE;   s_footStrength = randRange(0.75f, 1.0f); s_tFootwork = now + randRange(1.4f, 3.4f); }
+		else if (r < 78) { s_footwork = FW_DIAGONAL; s_footStrength = randRange(0.5f, 0.85f); s_tFootwork = now + randRange(0.5f, 1.4f);
+		                   s_footIn = randInt(2) ? 0.7f : -0.6f; }
+		else if (r < 90) { s_footwork = FW_PAUSE;    s_footStrength = 0.0f; s_tFootwork = now + randRange(0.25f, 0.8f); }
+		else             { s_footwork = FW_JUKE;     s_footStrength = 1.0f; s_tFootwork = now + randRange(0.22f, 0.45f); }
+		// now and then a hop on a sidestep, or a crouch in a pause (rarely:
+		// as a player dodging)
+		if (s_footwork == FW_JUKE && randInt(5) == 0) { s_ctl.jump = true; }
+		if (s_footwork == FW_PAUSE && randInt(10) == 0) { s_tCrouch = s_tFootwork; }
+	}
+
+	static void ease(f32* axis, f32 wanted, f32 dt)
+	{
+		// (picking up at about 4 a second, dying down a little quicker)
+		const f32 rate = (fabsf(wanted) > fabsf(*axis) && wanted * *axis >= 0.0f) ? 4.0f : 6.0f;
+		*axis += clampf(wanted - *axis, -rate * dt, rate * dt);
 	}
 
 	static void autopilot(f64 now, f32 dt)
@@ -1071,13 +1233,31 @@ namespace TFE_DarkForces
 
 		if (now >= s_tScan)
 		{
-			s_tScan = now + 0.15;
+			s_tScan = now + 0.12;
 			scan(eye, eyeSec, now);
 		}
+		wobble(dt);
 
-		// the weapon: round the ticked ones now and then; a punch up close,
-		// a detonator at a bunch
+		// a new face: a moment to react (the view stays where it was going)
+		if (s_target != s_noticed)
+		{
+			const bool fresh = s_noticed == nullptr || s_target != nullptr;
+			s_noticed = s_target;
+			if (s_target && fresh)
+			{
+				s_tReact = now + randRange(0.15f, 0.4f);
+				s_pitchBias = randRange(-0.025f, 0.03f);
+			}
+			s_tSettled = 0.0;
+		}
+		const bool reacting = now < s_tReact;
+		const bool fighting = s_target != nullptr && !reacting;
+		if (!reacting) { s_aimFrom = s_aim; }
+
+		// the weapon: a punch up close, a detonator at a bunch, and another
+		// gun only in a lull (no one in sight for a moment), never mid-fight
 		const f32 targetD = s_target ? len(s_aim - eye) : 1e9f;
+		const bool lull = !s_target && now - s_tSeen > 0.8;
 		if (s_throws == 0)
 		{
 			if (s_fists && s_target && targetD < 6.0f && s_weapon != WPN_FIST) { s_before = s_weapon; takeWeapon(WPN_FIST); }
@@ -1090,10 +1270,10 @@ namespace TFE_DarkForces
 				s_tThrow = now + 0.5;
 				s_tRelease = 0.0;
 			}
-			else if (now >= s_tSwitch && s_weapon != WPN_FIST)
+			else if (lull && now >= s_tSwitch && s_weapon != WPN_FIST)
 			{
 				pickWeapon(s_weapon);
-				s_tSwitch = now + randRange(7.0f, 12.0f);
+				s_tSwitch = now + randRange(9.0f, 16.0f);
 			}
 		}
 		if (p.curWeapon != s_weapon && p.newWeapon != s_weapon && now - s_tAsked > 0.8)
@@ -1103,38 +1283,48 @@ namespace TFE_DarkForces
 		}
 		const bool holding = p.curWeapon == s_weapon;
 
-		// where it looks: the target, the bunch for a throw, the scene, or
-		// away from what it's stuck on
-		f32 yawWanted = yaw, pitchWanted = 0.0f, turnRate = 5.0f;
-		f32 forward = 0.0f, strafe = 0.0f;
+		// where it looks
 		const bool evading = now < s_tEvade;
-		const bool throwing = holding && (s_weapon == WPN_THERMAL_DET) && (s_throws > 0 || s_target);
-		V3 aim = (throwing && s_bunchSeen) ? s_bunch : s_aim;
+		const bool throwing = holding && s_weapon == WPN_THERMAL_DET;
+		const V3 aim = (throwing && s_bunchSeen) ? s_bunch : s_aimFrom;
+		f32 yawWanted = yaw, pitchWanted = -0.03f, quickness = 9.0f;
+		f32 wantX = 0.0f, wantY = 0.0f;
+		const f32 dxz = maxf(lenXZ(aim - eye), 0.1f);
 		if (evading)
 		{
 			yawWanted = s_evadeYaw;
-			forward = 1.0f;
+			quickness = 6.0f;
+			wantY = 1.0f;
 		}
 		else if (s_target)
 		{
-			yawWanted = headingTo(eye, aim);
-			const f32 dxz = maxf(lenXZ(aim - eye), 0.1f);
-			pitchWanted = atan2f(eye.y - aim.y, dxz) * 0.6f;
+			// on the target (its last place in sight, for the moment it's out
+			// of it), with the hand's wander; a little up or down at those
+			// on ledges and below
+			yawWanted = headingTo(eye, aim) + s_drift + s_tremor;
+			pitchWanted = atan2f(eye.y - aim.y, dxz) * 0.85f + s_pitchBias + s_drift * 0.4f;
+			quickness = reacting ? 4.5f : 8.0f;
+			if (now >= s_tFootwork) { newFootwork(now, fighting); }
 			const f32 range = fightRange(holding ? s_weapon : p.curWeapon);
-			forward = clampf((dxz - range) / 6.0f, -1.0f, 1.0f);
-			if (fabsf(wrapAngle(yawWanted - yaw)) > 1.0f) { forward *= 0.3f; }
-			strafe = s_strafeDir * 0.85f;
-			if (now >= s_tStrafe)
+			const f32 keep = clampf((dxz - range) / 8.0f, -1.0f, 1.0f);	// (to the fighting distance)
+			switch (s_footwork)
 			{
-				s_strafeDir = -s_strafeDir;
-				s_tStrafe = now + randRange(0.9f, 2.2f);
+				case FW_STRAFE:   wantX = s_footDir * s_footStrength; wantY = keep * 0.6f; break;
+				case FW_CIRCLE:   wantX = s_footDir * s_footStrength; wantY = keep * 0.8f + 0.12f; break;
+				case FW_DIAGONAL: wantX = s_footDir * s_footStrength; wantY = (fabsf(keep) > 0.5f) ? keep : s_footIn; break;
+				case FW_PAUSE:    wantX = 0.0f; wantY = (fabsf(keep) > 0.8f) ? keep * 0.5f : 0.0f; break;
+				case FW_JUKE:     wantX = s_footDir; wantY = 0.0f; break;
 			}
+			// (circling: the turn keeps up with the sidestep)
+			if (s_footwork == FW_CIRCLE) { quickness = 9.5f; }
+			if (fabsf(wrapAngle(yawWanted - yaw)) > 1.0f) { wantY *= 0.3f; }
 		}
 		else
 		{
-			// no one in sight (for 1.5 s: the target is kept that long): face
-			// the middle of the group, those of it still about, and go to it;
-			// there, and still no one for a while, a look round
+			// no one in sight (the target is kept 1.5 s after it's gone):
+			// the group's middle, those of it still about, gone to if it's
+			// far (or, with none left there, the nearest anywhere); a glance
+			// to one side now and then, as a player checking the corners
 			V3 goal = s_center, sum = v3(0, 0, 0);
 			s32 count = 0;
 			for (const Foe& f : s_foes)
@@ -1142,60 +1332,92 @@ namespace TFE_DarkForces
 				if (lenXZ(f.pos - s_center) < c_downRange && fabsf(f.pos.y - s_center.y) < 40.0f) { sum = sum + f.pos; count++; }
 			}
 			if (count > 0) { goal = sum * (1.0f / f32(count)); }
-			const f32 d = lenXZ(goal - feet);
-			if (d > 10.0f || now - s_tSeen < 5.0)
-			{
-				yawWanted = (d > 1.0f) ? headingTo(feet, goal) : yaw;
-				pitchWanted = 0.0f;
-				if (d > 10.0f) { forward = fabsf(wrapAngle(yawWanted - yaw)) < 0.6f ? 1.0f : 0.25f; }
-			}
 			else
 			{
-				yawWanted = yaw + 1.0f;
-				turnRate = 1.2f;
+				// (no one left about, and no more coming: off to the nearest
+				// left in the level)
+				f32 best = 1e9f;
+				for (const Foe& f : s_foes)
+				{
+					const f32 dd = lenXZ(f.pos - feet) + fabsf(f.pos.y - feet.y) * 2.0f;
+					if (dd < best) { best = dd; goal = f.pos; }
+				}
 			}
+			const f32 d = lenXZ(goal - feet);
+			if (now >= s_tGlance)
+			{
+				s_glance = randInt(9) < 4 ? 0.0f : (randInt(2) ? 1.0f : -1.0f) * randRange(0.45f, 1.1f);
+				s_tGlance = now + randRange(1.0f, 2.8f);
+			}
+			const f32 toGoal = (d > 1.0f) ? headingTo(feet, goal) : yaw;
+			yawWanted = toGoal + ((d > 10.0f) ? s_glance * 0.3f : s_glance);
+			pitchWanted = -0.04f + s_drift;
+			quickness = 5.5f;
+			if (d > 10.0f) { wantY = fabsf(wrapAngle(toGoal - yaw)) < 0.6f ? 1.0f : 0.3f; }
 		}
 
-		// keep off ledges, pits and water, and out of walls (what it wanted
-		// to do counts for being stuck)
-		const f32 wanted = fabsf(forward) + fabsf(strafe);
+		// keep off ledges, pits and water, and out of walls; a way that's
+		// shut makes for other footwork (what it wanted counts for being
+		// stuck)
+		const f32 wanted = fabsf(wantX) + fabsf(wantY);
 		const f32 sy = sinf(yaw), cy = cosf(yaw);
-		if (forward > 0.05f && !canGo(feet, sec, sy, cy)) { forward = 0.0f; }
-		if (forward < -0.05f && !canGo(feet, sec, -sy, -cy)) { forward = 0.0f; }
-		if (fabsf(strafe) > 0.05f)
+		if (wantY > 0.05f && !canGo(feet, sec, sy, cy)) { wantY = 0.0f; }
+		if (wantY < -0.05f && !canGo(feet, sec, -sy, -cy)) { wantY = 0.0f; }
+		if (fabsf(wantX) > 0.05f)
 		{
 			// (right is +X at heading 0)
-			const f32 rx = cy * (strafe > 0.0f ? 1.0f : -1.0f), rz = -sy * (strafe > 0.0f ? 1.0f : -1.0f);
-			if (!canGo(feet, sec, rx, rz))
+			const f32 side = wantX > 0.0f ? 1.0f : -1.0f;
+			if (!canGo(feet, sec, cy * side, -sy * side))
 			{
-				s_strafeDir = -s_strafeDir;
-				strafe = -strafe;
-				if (!canGo(feet, sec, -rx, -rz)) { strafe = 0.0f; }
-				s_tStrafe = now + randRange(0.9f, 2.2f);
+				wantX = 0.0f;
+				if (s_target && now + 0.15 < s_tFootwork) { s_tFootwork = now + 0.15; s_footDir = -side; }
 			}
 		}
 
-		// not getting anywhere: strafe the other way, then turn away and jump
-		if (now - s_tMoved >= 0.5)
+		// (and the two together: a diagonal can find an edge neither finds)
+		if (fabsf(wantX) > 0.05f && fabsf(wantY) > 0.05f)
+		{
+			f32 dx = sy * wantY + cy * wantX, dz = cy * wantY - sy * wantX;
+			const f32 l = sqrtf(dx * dx + dz * dz);
+			if (l > 1e-3f && !canGo(feet, sec, dx / l, dz / l))
+			{
+				if (fabsf(wantX) < fabsf(wantY)) { wantX = 0.0f; } else { wantY = 0.0f; }
+			}
+		}
+
+		// (and a run carrying on towards an edge anyway: the stick pushed
+		// back against it, as a player brakes)
+		{
+			const f32 mx = feet.x - s_prevFeet.x, mz = feet.z - s_prevFeet.z;
+			const f32 ml = sqrtf(mx * mx + mz * mz);
+			if (ml > 0.02f && ml < 2.0f && !canGo(feet, sec, mx / ml, mz / ml))
+			{
+				// (the motion in the stick's terms: forward and right)
+				wantY = -clampf((mx * sy + mz * cy) / ml, -1.0f, 1.0f) * 0.9f;
+				wantX = -clampf((mx * cy - mz * sy) / ml, -1.0f, 1.0f) * 0.9f;
+			}
+			s_prevFeet = feet;
+		}
+
+		// not getting anywhere: other footwork; with no one in sight, turn
+		// away and hop
+		if (now - s_tMoved >= 0.6)
 		{
 			const f32 moved = lenXZ(feet - s_lastPos);
-			const bool trying = wanted > 0.6f;
-			if (trying && moved < 0.5f)
+			if (wanted > 0.6f && moved < 0.5f)
 			{
 				s_stuck++;
-				s_strafeDir = -s_strafeDir;
-				// (with someone in sight it keeps facing them, strafing)
-				if (s_stuck >= 3 && s_target)
-				{
-					s_stuck = 0;
-					s_ctl.jump = true;
-				}
-				else if (s_stuck >= 3)
+				s_tFootwork = now;
+				if (s_stuck >= 3 && !s_target)
 				{
 					s_stuck = 0;
 					s_evadeYaw = yaw + (randInt(2) ? 1.0f : -1.0f) * randRange(1.6f, 2.8f);
-					s_tEvade = now + 1.5;
-					s_ctl.jump = true;
+					s_tEvade = now + randRange(1.2f, 1.8f);
+					if (randInt(2)) { s_ctl.jump = true; }
+				}
+				else if (s_stuck >= 4)
+				{
+					s_stuck = 0;
 				}
 			}
 			else if (moved >= 0.5f)
@@ -1211,22 +1433,29 @@ namespace TFE_DarkForces
 		if (now >= s_tDbg)
 		{
 			s_tDbg = now + 0.5;
-			APDBG("ap t %.1f target %d seen %d err %.2f fwd %.2f str %.2f evade %d stuck %d wpn %d/%d dist %.1f\n", now - s_tScene, s_target ? 1 : 0, (int)s_seen.size(),
-				wrapAngle(yawWanted - yaw), forward, strafe, evading ? 1 : 0, s_stuck, p.curWeapon, s_weapon, s_target ? lenXZ(aim - eye) : -1.0f);
+			APDBG("ap t %.1f target %d react %d seen %d err %.2f vel %.2f fw %d x %.2f y %.2f wpn %d/%d dist %.1f\n", now - s_tScene, s_target ? 1 : 0,
+				reacting ? 1 : 0, (int)s_seen.size(), wrapAngle(yawWanted - yaw), s_yawVel, s_footwork, s_axisX, s_axisY, p.curWeapon, s_weapon,
+				s_target ? dxz : -1.0f);
 		}
 #endif
-		turnTowards(yawWanted, pitchWanted, dt, turnRate);
-		s_ctl.forward = forward;
-		s_ctl.strafe = strafe;
+		steer(yawWanted, pitchWanted, dt, quickness);
+		ease(&s_axisX, wantX, dt);
+		ease(&s_axisY, wantY, dt);
+		s_ctl.strafe = s_axisX;
+		s_ctl.forward = s_axisY;
+		s_ctl.crouch = now < s_tCrouch;
 
-		// fire: on target, in bursts; a detonator held to throw as far as the
-		// bunch, mines dropped now and then
+		// fire: once the aim has settled on the target, in bursts of
+		// varied length; a short tail once it's lost; a detonator held to
+		// throw as far as the bunch, mines dropped now and then
+		const f32 err = fabsf(wrapAngle(headingTo(eye, aim) - yaw));
+		const f32 tol = maxf(0.05f, atan2f(1.6f, dxz));
+		if (fighting && err < tol && fabsf(s_yawVel) < 1.5f) { if (s_tSettled <= 0.0) { s_tSettled = now; } }
+		else if (!fighting || err > tol * 2.5f) { s_tSettled = 0.0; }
+		const bool settled = s_tSettled > 0.0 && now - s_tSettled >= 0.1;
 		bool fire = false, alt = false;
-		if (s_target && holding && !evading)
+		if (s_target && holding && !evading && !reacting)
 		{
-			const f32 dxz = maxf(lenXZ(aim - eye), 0.1f);
-			const f32 err = fabsf(wrapAngle(headingTo(eye, aim) - yaw));
-			const bool onTarget = err < maxf(0.06f, atan2f(1.8f, dxz)) * 1.5f;
 			if (s_weapon == WPN_THERMAL_DET)
 			{
 				if (s_tRelease > 0.0)
@@ -1235,7 +1464,7 @@ namespace TFE_DarkForces
 					if (!fire)
 					{
 						s_tRelease = 0.0;
-						s_tThrow = now + 1.0;
+						s_tThrow = now + randRange(0.8f, 1.4f);
 						if (s_throws > 0 && --s_throws == 0)
 						{
 							takeWeapon(s_before);
@@ -1243,7 +1472,7 @@ namespace TFE_DarkForces
 						}
 					}
 				}
-				else if (onTarget && now >= s_tThrow && dxz < 60.0f)
+				else if (settled && now >= s_tThrow && dxz < 60.0f)
 				{
 					// (held 0.4 s to 0.8 s: the throw from short to far)
 					s_tRelease = now + clampf(0.4f + (dxz - 12.0f) / 40.0f * 0.4f, 0.4f, 0.8f);
@@ -1252,28 +1481,34 @@ namespace TFE_DarkForces
 			}
 			else if (s_weapon == WPN_MINE)
 			{
-				fire = onTarget && fmod(now, 2.5) < 0.3;
+				fire = settled && fmod(now, 2.5) < 0.3;
 			}
 			else if (s_weapon == WPN_FIST)
 			{
 				fire = dxz < 5.0f;
 			}
-			else if (onTarget && dxz < 90.0f)
+			else if (dxz < 90.0f && (settled || (now < s_tBurst && err < tol * 2.5f)))
 			{
 				if (now >= s_tPause)
 				{
-					// a new burst, now and then the other trigger (the
+					// a new burst, now and then on the other trigger (the
 					// repeater's three, the fusion cutter's four, the
 					// cannon's missiles)
 					const bool hasAlt = s_weapon == WPN_REPEATER || s_weapon == WPN_FUSION || s_weapon == WPN_CANNON;
-					s_tBurst = now + randRange(0.7f, 2.0f);
-					s_tPause = s_tBurst + randRange(0.15f, 0.5f);
+					s_tBurst = now + randRange(0.35f, 2.0f);
+					s_tPause = s_tBurst + randRange(0.15f, 0.6f);
 					s_burstAlt = hasAlt && randInt(10) < 3;
 				}
 				fire = now < s_tBurst;
 				alt = fire && s_burstAlt;
 				if (alt) { fire = false; }
 			}
+		}
+		// (a short tail as the target goes out of sight)
+		if ((fire || alt) && s_targetInSight) { s_tFireTail = now + randRange(0.12f, 0.35f); s_tailAlt = alt; }
+		else if (!fire && !alt && now < s_tFireTail && holding && s_weapon != WPN_THERMAL_DET && s_weapon != WPN_MINE)
+		{
+			if (s_tailAlt) { alt = true; } else { fire = true; }
 		}
 		s_ctl.fire = fire;
 		s_ctl.alt = alt;
@@ -1311,7 +1546,6 @@ namespace TFE_DarkForces
 		{
 			s_stage = ST_ARRIVE;
 			s_tStage = now;
-			s_visited.clear();
 			s_copies = 0;
 			clearControls();
 		}
@@ -1319,6 +1553,16 @@ namespace TFE_DarkForces
 		{
 			// (the level never came: AUTOPLAY gives up)
 			if (now - s_tStage > 30.0) { iosAutoplay_stop(false); }
+			return;
+		}
+		// TIME: the show's time up, it ends as a tap ends it (the time
+		// counted only while it plays: dt is at most a tenth of a second,
+		// and this runs only while a level is being played)
+		s_played += dt;
+		if (s_played >= f64(s_opt.iShowSeconds))
+		{
+			APDBG("TIME up at %.1f s played (%.1f s since the start)\n", s_played, now - s_tStart);
+			iosAutoplay_stop(true);
 			return;
 		}
 		keepPlayer(arrived);
@@ -1339,13 +1583,18 @@ namespace TFE_DarkForces
 		if (s_stage != ST_SCENE) { return; }
 
 		autopilot(now, dt);
+	#ifdef IOS_AUTOPLAY_RIG_DEBUG
+		if (getenv("APTEST_YAWLOG")) { printf("APYAW %.4f %d %d %.3f %.3f\n", now, s_playerYaw, s_eyePitch, s_ctl.strafe, s_ctl.forward); }
+	#endif
 
-		// the scene's end: its time up, or no one left where the group was
-		// (for a moment), or Kyle long lost far from it
+		// no one left where the group was (for a moment), or no one in sight
+		// for a while: more of their kinds come in, from out of sight; Kyle lost (fallen into a trench
+		// or a shaft, wandered far, stuck): put back near the group, quietly
 		if (now >= s_tCheck)
 		{
 			s_tCheck = now + 0.25;
 			const V3 feet = fromFixed(s_playerObject->posWS);
+			if (lenXZ(feet - s_farPos) > 6.0f) { s_farPos = feet; s_tMovedFar = now; }
 			const s32 left = foesAround(s_center, c_downRange) + s32(s_seen.size());
 			if (left == 0)
 			{
@@ -1355,16 +1604,27 @@ namespace TFE_DarkForces
 			{
 				s_tDown = 0.0;
 			}
-			APDBG("check t %.1f left %d seen %d target %p total %d\n", now - s_tScene, left, (int)s_seen.size(), (void*)s_target, (int)s_foes.size());
-			const bool down = s_tDown > 0.0 && now - s_tDown >= 1.2;
-			// (or fallen far below it: a shaft, a lift gone down; or below it
-			// with no one in sight for a while: a trench, a lower room)
-			const bool lost = (!s_target && now - s_tSeen > 6.0 && lenXZ(feet - s_center) > 100.0f) || feet.y - s_center.y > 24.0f
-				|| (feet.y - s_center.y > 8.0f && !s_target && now - s_tSeen > 3.0);
-			if (down || lost || now - s_tScene >= f64(s_opt.iSceneSeconds))
+			// (or a lull: no one in sight for a while, those left out of reach)
+			const bool lull = !s_target && now - s_tSeen > 4.0;
+			if (((s_tDown > 0.0 && now - s_tDown >= 1.5) || lull) && now >= s_tWave)
 			{
-				APDBG("scene over: %s (Kyle %.1f %.1f %.1f, scene %.1f %.1f %.1f)\n", down ? "down" : (lost ? "lost" : "time"), feet.x, feet.y, feet.z, s_center.x, s_center.y, s_center.z);
-				startScene(now);
+				const s32 n = reinforce(feet);
+				s_tWave = now + (n > 0 ? 4.0 : 2.0);
+				APDBG("wave at %.1f s: %d come in\n", now - s_tStart, n);
+			}
+			const bool lost = (!s_target && now - s_tSeen > 6.0 && lenXZ(feet - s_center) > 100.0f) || feet.y - s_center.y > 24.0f
+				|| (feet.y - s_center.y > 8.0f && !s_target && now - s_tSeen > 3.0)
+				|| (!s_target && now - s_tMovedFar > 12.0);
+			if (lost && now >= s_tReplace)
+			{
+				s_tReplace = now + 8.0;
+				Spot spot;
+				if (findSpot(s_group, &spot))
+				{
+					APDBG("put back at %.1f s (Kyle %.1f %.1f %.1f)\n", now - s_tStart, feet.x, feet.y, feet.z);
+					player_iosPlace(spot.sector, floatToFixed16(spot.feet.x), floatToFixed16(spot.feet.z), toAngle14(spot.yaw));
+					resetPilot(now, spot.feet);
+				}
 			}
 		}
 	}
@@ -1387,6 +1647,10 @@ namespace TFE_DarkForces
 			else { inputMapping_setStatePress(IADF_SECONDARY_FIRE); }
 		}
 		s_altPrev = s_ctl.alt;
+		if (s_ctl.crouch) { inputMapping_setStateDown(IADF_CROUCH); }
+		const f64 now = SDL_GetTicks() / 1000.0;
+		if (s_ctl.jump) { s_tShowJump = now + 0.25; }
+		if (s_ctl.weapon >= 0) { s_tShowSwitch = now + 0.3; }	// (as NEXT WPN tapped, to show)
 		if (s_ctl.jump)
 		{
 			inputMapping_setStatePress(IADF_JUMP);
@@ -1394,7 +1658,7 @@ namespace TFE_DarkForces
 		}
 		if (s_ctl.weapon >= 0 && s_ctl.weapon < WPN_COUNT)
 		{
-			inputMapping_setStatePress(InputAction(IADF_WEAPON_1 + s_ctl.weapon));
+			inputMapping_setStatePress(InputAction(iosGame_weaponKey(s_ctl.weapon)));
 		}
 		s_ctl.weapon = -1;
 	}
@@ -1405,7 +1669,29 @@ namespace TFE_DarkForces
 		if (!s_on) { return; }
 		*dx = s_ctl.lookX;
 		*dy = s_ctl.lookY;
+		s_shownLookX += s_ctl.lookX;
+		s_shownLookY += s_ctl.lookY;
 		s_ctl.lookX = s_ctl.lookY = 0.0f;
+	}
+
+	void iosAutoplay_display(IOSAutoplayDisplay* display)
+	{
+		memset(display, 0, sizeof(*display));
+		if (!s_on || !s_opt.bControls || s_stage != ST_SCENE) { s_shownLookX = s_shownLookY = 0.0f; return; }
+		const f64 now = SDL_GetTicks() / 1000.0;
+		display->bOn = 1;
+		display->fMoveX = s_axisX;
+		display->fMoveY = s_axisY;
+		display->fLookX = s_shownLookX;
+		display->fLookY = s_shownLookY;
+		s_shownLookX = s_shownLookY = 0.0f;
+		u32 b = 0;
+		if (s_ctl.fire || s_firePrev) { b |= IOSTOUCH_FIRE; }
+		if (s_ctl.alt || s_altPrev) { b |= IOSTOUCH_ZOOM; }
+		if (s_ctl.crouch) { b |= IOSTOUCH_CROUCH; }
+		if (now < s_tShowJump) { b |= IOSTOUCH_JUMP; }
+		if (now < s_tShowSwitch) { b |= IOSTOUCH_NEXTWEAPON; }
+		display->ulButtons = b;
 	}
 }
 #endif

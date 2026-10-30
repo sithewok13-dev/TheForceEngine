@@ -98,10 +98,11 @@
        FPS (shows or hides a frame rate readout by QUICK SAVE), AUTOPLAY
        (Dark Forces: opens the self-playing show's panel over the game,
        which holds still meanwhile: LEVELS, DIFFICULTY, CROWD, ALARM,
-       SCENES, WEAPONS and HUD, each a tap on its right half for the next
-       value and its left half for the one before, remembered; START
-       starts it; while it plays nothing shows and a tap anywhere ends it,
-       IOSTOUCH_AUTOPLAY), CAMERA
+       TIME, WEAPONS, HUD and CONTROLS, each a tap on its right half for
+       the next value and its left half for the one before, remembered;
+       START starts it; while it plays nothing shows, or with CONTROLS ON
+       the controls as a player's thumbs would work them (display only),
+       and a tap anywhere ends it, IOSTOUCH_AUTOPLAY), CAMERA
        (shows or hides CAMERA; held, its options open in a row under the
        tray), CHEAT (the sithewok cheat's switch), LEVEL (only while the
        cheat is on, single player: opens the list of the game's levels, in
@@ -312,13 +313,26 @@ typedef struct IOSAutoplayOptions {
   int iDifficulty;       /* 0 EASY, 1 MEDIUM, 2 HARD */
   int iCrowd;            /* 1..3: each scene's enemies, and that many times over in copies of their own kinds */
   int bAlarm;            /* each scene starts with everyone around woken and hunting */
-  int iSceneSeconds;     /* a scene's length (it ends sooner once its enemies are down) */
+  int iShowSeconds;      /* how long the show plays (counting only while it plays); then it ends as a tap ends it */
   unsigned int ulWeapons; /* bit w: weapon number w ticked (IOSAUTOPLAY_WEAPONS_ALL: ALL) */
   int bHud;              /* the game's HUD shows */
+  int bControls;         /* the touch controls show, as if someone were playing (display only) */
 } IOSAutoplayOptions;
 /* Main thread: the options AUTOPLAY starts with (IOSTOUCH_REQ_AUTOPLAY), as
    its panel last set them (the app's settings) */
 void IOSTouch_GetAutoplayOptions(IOSAutoplayOptions *pOptions);
+/* What the autopilot is doing, for CONTROLS ON: the overlay then shows the
+   controls during the show as in play, a left thumb on the move stick, a
+   right thumb's fingertip dragging to look, and the buttons it uses lit.
+   Display only: nothing it shows is a touch, and a tap still ends the show. */
+typedef struct IOSAutoplayDisplay {
+  int bOn;                 /* show the controls (CONTROLS ON, the show playing) */
+  float fMoveX, fMoveY;    /* the stick: -1..1, right and forward */
+  float fLookX, fLookY;    /* the look since the last call, in mouse counts (+: right, down) */
+  unsigned int ulButtons;  /* IOSTOUCH_FIRE, _ZOOM (ALT), _JUMP, _CROUCH, _NEXTWEAPON in use */
+} IOSAutoplayDisplay;
+/* Main thread, every frame before IOSTouch_Update */
+void IOSTouch_SetAutoplayDisplay(const IOSAutoplayDisplay *pDisplay);
 
 /* Provided by the HUD (Entities Common/HUD.cpp), main thread */
 void IOS_GetHudState(IOSTouchHud *pHud);

@@ -38,22 +38,31 @@ They own both the original Dark Forces and Nightdive's Dark Forces Remaster
   view, and every shot and blast, is hidden; nobody about gives "No one
   around for a group photo". Action Freeze and the cinematic burst draw the player as
   HUMAN3.3DO coloured as Kyle.
-  AUTOPLAY (MENU's tray: its panel in `IOSTouch.m`, seven remembered rows,
-  a weapon picker with the wheel's pictures, a custom scene length slider,
-  START; LEVELS' PICK ONE reuses the cheat's list of levels) is a
-  self-playing show for screen recordings:
-  `TFE_DarkForces/iosAutoplay.cpp`. START saves the game ("Before
-  AUTOPLAY", `autoplay.tfe`), loads a level (shuffled, or the one picked)
-  straight in at its own difficulty (no briefing, cutscene or agent progress
-  saved: hooks in `darkForcesMain.cpp` and `mission.cpp`), groups the
-  enemies by where they stand and visits the biggest first: each scene Kyle
-  is placed somewhere safe near a group, facing it (`player_iosPlace`), the
-  group gets copies of its own kinds (CROWD; at most 36 enemies about, 160
-  copies a level; kinds noted in `obj_setEnemyLogic`), everyone near is
-  woken (ALARM), and the autopilot fights through the input mapping and
-  mouse motion as the overlay does, with god mode and full ammo, until the
-  scene's time is up or the group is down. The overlay shows nothing
-  meanwhile (`IOSTOUCH_AUTOPLAY`); a tap loads the save back.
+  AUTOPLAY (MENU's tray: its panel in `IOSTouch.m`, eight remembered rows,
+  a weapon picker with the wheel's pictures, TIME's custom slider, START;
+  LEVELS' PICK ONE reuses the cheat's list of levels) is a self-playing
+  show for screen recordings: `TFE_DarkForces/iosAutoplay.cpp`. START saves
+  the game ("Before AUTOPLAY", `autoplay.tfe`), loads a level (shuffled, or
+  the one picked) straight in at its own difficulty (no briefing, cutscene
+  or agent progress saved: hooks in `darkForcesMain.cpp` and `mission.cpp`)
+  and plays one fight, no cuts: one of the level's top few groups (by size
+  and light) at random, Kyle placed somewhere safe near it with a clear
+  view of them (`player_iosPlace`), copies of its own kinds added (CROWD;
+  at most 36 enemies about; kinds noted in `obj_setEnemyLogic`), everyone
+  near woken (ALARM). Once the group is down, more of its kinds come in
+  from out of sight; with nothing to copy he goes after the nearest left;
+  lost or stuck, he's put back near the group. The autopilot plays like a
+  person, through the input mapping and mouse motion as the overlay does
+  (the view on a spring with a reaction delay, a wandering aim that
+  settles before firing, varied footwork on an eased stick, bursts with a
+  tail, glances, weapon changes in lulls), with god mode and full ammo.
+  When TIME is up (only play counts: not loads or the background) or at a
+  tap, it loads the save back; nothing on screen counts down. The overlay
+  shows nothing meanwhile (`IOSTOUCH_AUTOPLAY`), or with CONTROLS ON the
+  controls as in play, worked as a player's thumbs would from what the
+  autopilot does (`IOSTouch_SetAutoplayDisplay`: the stick under a left
+  thumb, a faint right fingertip dragging with the look, FIRE, ALT, JUMP,
+  CROUCH and NEXT WPN lit as used; display only, a tap still ends it).
 - **iOS code:**
   - `ios/`: the app around the engine. `ios_app.cmake` (bundle, Info.plist,
     icon, support files, ANGLE frameworks), `Info.plist.in`, `Assets.xcassets`,

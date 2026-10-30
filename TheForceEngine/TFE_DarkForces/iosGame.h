@@ -10,6 +10,7 @@
 struct RSector;
 struct SecObject;
 struct IOSAutoplayOptions;
+struct IOSAutoplayDisplay;
 
 namespace TFE_DarkForces
 {
@@ -53,11 +54,18 @@ namespace TFE_DarkForces
 	// it made then)
 	void iosAutoplay_stop(bool restore);
 	bool iosAutoplay_on();
+	// The game's key for a weapon (WeaponID): keys 1 to 0 in the game's
+	// order, which has the mines (7) before the mortar (8), as the WeaponIDs
+	// don't
+	s32 iosGame_weaponKey(s32 weapon);
+
 	// (iosGame_frame, after the game's input mapping) its stick, buttons
 	// and weapon picks into this frame's input
 	void iosAutoplay_input();
 	// (iosGame_takeLook) its turning, in mouse counts
 	void iosAutoplay_takeLook(f32* dx, f32* dy);
+	// (iosGame_frame, for the overlay) what it does, for CONTROLS ON to show
+	void iosAutoplay_display(IOSAutoplayDisplay* display);
 	// (the mission's main task, once a frame while the game runs, where the
 	// cheats run) its scenes, cuts, crowds and alarms, and the autopilot
 	void iosAutoplay_gameTick();
