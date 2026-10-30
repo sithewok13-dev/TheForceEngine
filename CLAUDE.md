@@ -29,13 +29,14 @@ They own both the original Dark Forces and Nightdive's Dark Forces Remaster
   hiding and moves applied only while that view is drawn and put back right
   after, every frame). A selfie (the long press) is a group photo from
   the player's phone, with no player in it: the nearest enemies are
-  brought in close and pose in their own sprite frames (never an attack
-  or aim; standing, strutting, death frames as leaps and pratfalls,
-  lifted off the floor), a theme per photo (huddle, a face peeking in
-  at the frame's edge, a pile of bodies, a totem, jumping with the
-  game's own blasts as fireworks, a class photo gone wrong, a face-off);
-  others in view are hidden; nobody about gives "No one around for a
-  group photo". Action Freeze and the cinematic burst draw the player as
+  brought in close and pose together, all facing the lens in their
+  standing frame (now and then a step of their walk; never an attack,
+  pain or death frame), an arrangement per photo (huddle, faces peeking
+  in at the frame's edge, rows, a corner, a tiny one far off between two
+  faces, a totem or pyramid on shoulders, one held up high), anyone
+  whose face would be hidden stood up on something; everyone else in
+  view, and every shot and blast, is hidden; nobody about gives "No one
+  around for a group photo". Action Freeze and the cinematic burst draw the player as
   HUMAN3.3DO coloured as Kyle.
 - **iOS code:**
   - `ios/`: the app around the engine. `ios_app.cmake` (bundle, Info.plist,
