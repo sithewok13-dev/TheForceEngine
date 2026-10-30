@@ -130,6 +130,9 @@ static const float _afLookSteps[] = { 0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 2.0f, 2.5f
 // The HUD's frame (IOSTouch_GetHudFrame) keeps its corners this far inside the
 // screen's rounded corners
 #define IOSTOUCH_HUD_CORNER_GAP 2.0
+// and its bottom this far up from the screen's bottom (on screens with an inset
+// there: the home indicator's is 21 pt)
+#define IOSTOUCH_HUD_BOTTOM 10.0
 // Tilt aiming (see IOSTouch_GyroFrame), as in the Jedi Knight port.
 // CoreMotion's device motion gives the rotation rate with the gyro's bias
 // already taken out, IOSTOUCH_GYRO_HZ times a second. Turning left and right
@@ -403,8 +406,11 @@ static void IOSTouch_SharedWheelOpened(void)
 // 47 for 47.3 on the 12, 44 for 39 on the X -- and so does an iPad's bottom
 // inset (20 for 18). The frame's corners go on the screen corners' arcs at 45
 // degrees, IOSTOUCH_HUD_CORNER_GAP inside (19.6 pt in on the 18 Pro Max), so
-// nothing drawn inside the frame is cut off; its bottom also stays above the
-// home indicator (21 pt). Screens without insets have square corners: the
+// nothing drawn inside the frame is cut off. Its bottom sits
+// IOSTOUCH_HUD_BOTTOM up, lower than the home indicator's inset (21 pt): the
+// HUD's pieces are in the corners, clear of the indicator in the middle, and
+// the frame's sides come in as far as the corners' arcs then need (about 30 pt
+// on the 18 Pro Max). Screens without insets have square corners: the
 // frame is the whole screen. The camera cutout sits at mid-height by a side:
 // the Dynamic Island (side insets 59 pt and up, 126 pt long) is well clear of
 // the HUD, but a notch (side insets 44-50 pt, up to about 210 pt long and 33
@@ -417,9 +423,18 @@ static void IOSTouch_HudFrameInsets(double inLeft, double inTop, double inRight,
   const double R = fmax(fmax(inLeft, inRight), fmax(inTop, inBottom));
   const double c = (R > IOSTOUCH_HUD_CORNER_GAP) ? R - (R - IOSTOUCH_HUD_CORNER_GAP) / M_SQRT2 : 0.0;
   const double side = fmax(inLeft, inRight);
-  *pfLeft = *pfRight = (side >= 40.0 && side < 55.0) ? fmax(c, side - 22.0) : c;
+  double sideIn = c, bottom = fmax(inBottom, c);
+  if (inBottom > IOSTOUCH_HUD_BOTTOM && R > IOSTOUCH_HUD_CORNER_GAP) {
+    // lower: the sides in as far as the corners' arcs need at that height
+    const double r = R - IOSTOUCH_HUD_CORNER_GAP, d = R - IOSTOUCH_HUD_BOTTOM;
+    if (d < r) {
+      sideIn = fmax(c, R - sqrt(r * r - d * d));
+      bottom = IOSTOUCH_HUD_BOTTOM;
+    }
+  }
+  *pfLeft = *pfRight = (side >= 40.0 && side < 55.0) ? fmax(sideIn, side - 22.0) : sideIn;
   *pfTop = fmax(inTop, c);
-  *pfBottom = fmax(inBottom, c);
+  *pfBottom = bottom;
 }
 
 typedef struct {
