@@ -96,8 +96,12 @@
        SENS (tilt aiming's sensitivity: 1.0x, 1.5x, 2.0x, 3.0x; 1.5x to
        begin with), GYRO (tilt aiming: OFF, TOUCH, ALWAYS; lit while on),
        FPS (shows or hides a frame rate readout by QUICK SAVE), AUTOPLAY
-       (Dark Forces: starts the self-playing show; while it plays nothing
-       shows and a tap anywhere ends it, IOSTOUCH_AUTOPLAY), CAMERA
+       (Dark Forces: opens the self-playing show's panel over the game,
+       which holds still meanwhile: LEVELS, DIFFICULTY, CROWD, ALARM,
+       SCENES, WEAPONS and HUD, each a tap on its right half for the next
+       value and its left half for the one before, remembered; START
+       starts it; while it plays nothing shows and a tap anywhere ends it,
+       IOSTOUCH_AUTOPLAY), CAMERA
        (shows or hides CAMERA; held, its options open in a row under the
        tray), CHEAT (the sithewok cheat's switch), LEVEL (only while the
        cheat is on, single player: opens the list of the game's levels, in
@@ -312,7 +316,8 @@ typedef struct IOSAutoplayOptions {
   unsigned int ulWeapons; /* bit w: weapon number w ticked (IOSAUTOPLAY_WEAPONS_ALL: ALL) */
   int bHud;              /* the game's HUD shows */
 } IOSAutoplayOptions;
-/* Main thread: the options AUTOPLAY starts with (IOSTOUCH_REQ_AUTOPLAY) */
+/* Main thread: the options AUTOPLAY starts with (IOSTOUCH_REQ_AUTOPLAY), as
+   its panel last set them (the app's settings) */
 void IOSTouch_GetAutoplayOptions(IOSAutoplayOptions *pOptions);
 
 /* Provided by the HUD (Entities Common/HUD.cpp), main thread */

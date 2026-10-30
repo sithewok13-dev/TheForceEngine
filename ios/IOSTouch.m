@@ -229,7 +229,7 @@ enum {
   KIND_LOOKSPEED,// (MENU's tray) the next look speed, when the touch lifts on it; held IOSTOUCH_MENU_HOLD, back to 1x
   KIND_HD,       // (MENU's tray, Dark Forces) the Remaster's HD graphics on or off, when the touch lifts on it
   KIND_OPACITY,  // (MENU's tray) opens or closes its slider, when the touch lifts on it; held IOSTOUCH_MENU_HOLD, back to full
-  KIND_AUTOPLAY, // (MENU's tray, Dark Forces) starts AUTOPLAY, when the touch lifts on it
+  KIND_AUTOPLAY, // (MENU's tray, Dark Forces) opens AUTOPLAY's panel, when the touch lifts on it
 };
 
 // which modes a button shows in
@@ -301,7 +301,7 @@ static IOSTouchButton _aButtons[] = {
   [BTN_TRAYOPACITY] = { "OPACITY",   KIND_OPACITY,  0,                      20.0, 0, SHOW_ALL },
   [BTN_TRAYFPS]   = { "FPS",         KIND_FPS,      0,                      20.0, 0, SHOW_ALL },
   [BTN_TRAYHD]    = { "HD",          KIND_HD,       IOSTOUCH_REQ_HD,        20.0, 0, SHOW_PLAY },
-  [BTN_TRAYAUTO]  = { "AUTO\nPLAY",  KIND_AUTOPLAY, IOSTOUCH_REQ_AUTOPLAY,  20.0, 0, SHOW_PLAY },
+  [BTN_TRAYAUTO]  = { "AUTO\nPLAY",  KIND_AUTOPLAY, 0,                      20.0, 0, SHOW_PLAY },
   [BTN_TRAYCAM]   = { "",            KIND_CAMSWITCH, 0,                     20.0, 0, SHOW_ALL },
   [BTN_TRAYCHEAT] = { "CHEAT",       KIND_CHEATSWITCH, 0,                   20.0, 0, SHOW_ALL },
   [BTN_TRAYLEVEL] = { "LEVEL",       KIND_LEVELPICK, 0,                     20.0, 0, SHOW_PLAY },
@@ -1026,6 +1026,12 @@ static int _bShowCheat = 0, _bCheatOn = 0, _bFlying = 0, _bNoclip = 0;
 static float _fCheatRing = 0.0f;
 static float _afCheatActRing[2] = { 0.0f, 0.0f }; // JUMP, USE
 static int _bLevelListOpen = 0, _iLevelPicked = 0;
+// AUTOPLAY's panel (Dark Forces; see IOSTouch_OpenAutoplay): which part of
+// it is open, and whether the list of levels is open for its LEVELS (PICK
+// ONE) rather than the cheat's
+enum { APPANEL_NONE = 0, APPANEL_MAIN, APPANEL_WEAPONS, APPANEL_SECONDS, APPANEL_LEVELS };
+static int _iApPanel = APPANEL_NONE;
+static int _bLevelListForAutoplay = 0;
 static double _tJumpTapLift = -1.0;
 static int _iCheatCarry = -1;
 static unsigned int _uCarryWorld = 0;
@@ -1330,22 +1336,6 @@ void IOSTouch_ShowMessage(const char *str, double fSeconds)
   _fCamMessageTime = fSeconds;
 }
 
-// AUTOPLAY's options (Dark Forces). For now always its defaults: every
-// level shuffled, HARD, twice the crowd, the alarm on, 20 s scenes, every
-// weapon, no HUD.
-void IOSTouch_GetAutoplayOptions(IOSAutoplayOptions *pOptions)
-{
-  if (!pOptions) return;
-  memset(pOptions, 0, sizeof(*pOptions));
-  pOptions->iLevel = 0;
-  pOptions->iDifficulty = 2;
-  pOptions->iCrowd = 2;
-  pOptions->bAlarm = 1;
-  pOptions->iSceneSeconds = 20;
-  pOptions->ulWeapons = IOSAUTOPLAY_WEAPONS_ALL;
-  pOptions->bHud = 0;
-}
-
 // Lets go of every touch but s (it carries on as it is): they are ignored
 // until they lift. MENU's tray closes; the stick stops.
 static void IOSTouch_DropTouches(const IOSTouchSlot *s)
@@ -1571,6 +1561,7 @@ static void IOSTouch_UseCameraOption(int button)
 
 static void IOSTouch_UseCheatSwitch(void); // (the cheat, below)
 static void IOSTouch_OpenLevelList(void);
+static void IOSTouch_OpenAutoplay(void); // (AUTOPLAY's panel, below)
 
 // The next look speed up from the one now, round to the first (from one
 // between two steps: the step above it)
@@ -1624,7 +1615,8 @@ static void IOSTouch_UseTrayButton(int button)
     _iRequests |= _aButtons[button].ulAction; // (the game switches, and says so)
   }
   else if (kind == KIND_AUTOPLAY) {
-    _iRequests |= _aButtons[button].ulAction; // (the game starts it, IOSTouch_GetAutoplayOptions)
+    IOSTouch_OpenAutoplay(); // (its panel; its START starts it; the tray closes)
+    return;
   }
   else if (kind == KIND_FPS) {
     IOSTouch_SetShowFps(!_bShowFps);
@@ -1723,7 +1715,7 @@ static void IOSTouch_SetCheat(int bOn)
   if (!_bCheatOn) {
     // (what it gave is kept: the game does that)
     _bFlying = _bNoclip = 0;
-    _bLevelListOpen = 0;
+    if (!_bLevelListForAutoplay) _bLevelListOpen = 0;
   }
 }
 
@@ -1835,13 +1827,24 @@ static void IOSTouch_OpenLevelList(void)
 static void IOSTouch_CloseLevelList(void)
 {
   _bLevelListOpen = 0;
+  // (AUTOPLAY's: back to its panel)
+  if (_bLevelListForAutoplay) {
+    _bLevelListForAutoplay = 0;
+    if (_iApPanel == APPANEL_LEVELS) _iApPanel = APPANEL_MAIN;
+  }
 }
+
+static void IOSTouch_AutoplayPickedLevel(int iLevel); // (AUTOPLAY's, below)
 
 // Level iLevel (1..ctLevels) tapped in the list: it closes, and the main
 // loop starts that level (IOSTouch_TakeLevelPick), the weapon in hand now
 // back in hand there
 static void IOSTouch_PickLevel(int iLevel)
 {
+  if (_bLevelListForAutoplay) {
+    IOSTouch_AutoplayPickedLevel(iLevel);
+    return;
+  }
   const int bOpen = _bLevelListOpen;
   _bLevelListOpen = 0;
   if (!bOpen || !IOSTouch_CheatCanAct() || !IOSTouch_LevelPickShows() || iLevel < 1 || iLevel > _hud.ctLevels) return;
@@ -1853,6 +1856,284 @@ static void IOSTouch_PickLevel(int iLevel)
   char str[64];
   snprintf(str, sizeof(str), "Loading level %d", iLevel);
   IOS_ShowCameraMessage(str);
+}
+
+// ---------------------------------------------------------------- AUTOPLAY
+// Dark Forces' self-playing show (the game side: iosAutoplay.cpp). MENU's
+// tray's AUTOPLAY opens its panel over the game, which holds still
+// meanwhile: seven rows, "LABEL  < value >", a tap on a row's right half
+// going on to the next value and on its left half back to the one before:
+//   LEVELS      SHUFFLE ALL / PICK ONE (the cheat's list of levels opens to
+//               pick it from; the row then names the level)
+//   DIFFICULTY  EASY / MEDIUM / HARD
+//   CROWD       1x / 2x / 3x
+//   ALARM       ON / OFF
+//   SCENES      10 ... 180 SEC, CUSTOM (a slider opens: 5 s to 10 min, in
+//               5 s steps; the row then says how long)
+//   WEAPONS     ALL, or "3 PICKED": a tap opens the picker (the game's own
+//               weapon pictures, tap to tick or untick, ALL, DONE; one at
+//               least stays ticked)
+//   HUD         OFF / ON
+// and START, and an X. A touch off the panel closes it, as the X does.
+// Everything is remembered (the app's settings), and START starts the show
+// with it (IOSTOUCH_REQ_AUTOPLAY, IOSTouch_GetAutoplayOptions).
+enum { APROW_LEVELS = 0, APROW_DIFFICULTY, APROW_CROWD, APROW_ALARM, APROW_SCENES, APROW_WEAPONS, APROW_HUD, APROW_COUNT };
+#define IOSTOUCH_AP_PRESETS 9 // SCENES' lengths before CUSTOM
+static const int _aiApPresets[IOSTOUCH_AP_PRESETS] = { 10, 15, 20, 30, 45, 60, 90, 120, 180 };
+#define IOSTOUCH_AP_CUSTOM IOSTOUCH_AP_PRESETS // (SCENES' index for CUSTOM)
+#define IOSTOUCH_AP_SECONDS_MIN 5
+#define IOSTOUCH_AP_SECONDS_MAX 600
+#define IOSTOUCH_AP_SECONDS_STEP 5
+#define IOSTOUCH_AP_LEVEL_KEY @"iosTouchAutoplayLevel"
+#define IOSTOUCH_AP_DIFFICULTY_KEY @"iosTouchAutoplayDifficulty"
+#define IOSTOUCH_AP_CROWD_KEY @"iosTouchAutoplayCrowd"
+#define IOSTOUCH_AP_ALARM_KEY @"iosTouchAutoplayAlarm"
+#define IOSTOUCH_AP_SCENE_KEY @"iosTouchAutoplayScene"
+#define IOSTOUCH_AP_CUSTOM_KEY @"iosTouchAutoplayCustomSeconds"
+#define IOSTOUCH_AP_WEAPONS_KEY @"iosTouchAutoplayWeapons"
+#define IOSTOUCH_AP_HUD_KEY @"iosTouchAutoplayHud"
+
+// What's set (iSceneSeconds follows the SCENES index), loaded from the
+// app's settings the first time it's needed; SCENES' index (a preset, or
+// CUSTOM) and the custom length, and the index before CUSTOM was stepped
+// onto (its slider's X goes back to it); the weapon picker's ticks while
+// it's open (DONE keeps them); a count that goes up with every change (the
+// view shows the panel again when it moves)
+static IOSAutoplayOptions _ap;
+static int _bApLoaded = 0;
+static int _iApScene = 2, _iApSceneBefore = 2, _iApCustom = 75;
+static unsigned int _ulApPicking = IOSAUTOPLAY_WEAPONS_ALL;
+static unsigned int _uApChanges = 0;
+
+static int IOSTouch_ClampInt(long v, int lo, int hi)
+{
+  return v < lo ? lo : (v > hi ? hi : (int)v);
+}
+
+static void IOSTouch_AutoplaySeconds(void)
+{
+  _ap.iSceneSeconds = (_iApScene >= 0 && _iApScene < IOSTOUCH_AP_PRESETS) ? _aiApPresets[_iApScene] : _iApCustom;
+}
+
+static void IOSTouch_AutoplayLoad(void)
+{
+  if (_bApLoaded) return;
+  _bApLoaded = 1;
+  NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+  // (the defaults: every level shuffled, HARD, twice the crowd, the alarm
+  // on, 20 s scenes, every weapon, no HUD)
+  _ap.iLevel = [d objectForKey:IOSTOUCH_AP_LEVEL_KEY] ? IOSTouch_ClampInt([d integerForKey:IOSTOUCH_AP_LEVEL_KEY], 0, 999) : 0;
+  _ap.iDifficulty = [d objectForKey:IOSTOUCH_AP_DIFFICULTY_KEY] ? IOSTouch_ClampInt([d integerForKey:IOSTOUCH_AP_DIFFICULTY_KEY], 0, 2) : 2;
+  _ap.iCrowd = [d objectForKey:IOSTOUCH_AP_CROWD_KEY] ? IOSTouch_ClampInt([d integerForKey:IOSTOUCH_AP_CROWD_KEY], 1, 3) : 2;
+  _ap.bAlarm = [d objectForKey:IOSTOUCH_AP_ALARM_KEY] ? ([d boolForKey:IOSTOUCH_AP_ALARM_KEY] ? 1 : 0) : 1;
+  _iApScene = [d objectForKey:IOSTOUCH_AP_SCENE_KEY] ? IOSTouch_ClampInt([d integerForKey:IOSTOUCH_AP_SCENE_KEY], 0, IOSTOUCH_AP_CUSTOM) : 2;
+  _iApCustom = [d objectForKey:IOSTOUCH_AP_CUSTOM_KEY]
+                 ? IOSTouch_ClampInt([d integerForKey:IOSTOUCH_AP_CUSTOM_KEY], IOSTOUCH_AP_SECONDS_MIN, IOSTOUCH_AP_SECONDS_MAX) : 75;
+  _iApCustom -= _iApCustom % IOSTOUCH_AP_SECONDS_STEP;
+  _ap.ulWeapons = [d objectForKey:IOSTOUCH_AP_WEAPONS_KEY]
+                    ? ((unsigned int)[d integerForKey:IOSTOUCH_AP_WEAPONS_KEY] & IOSAUTOPLAY_WEAPONS_ALL) : IOSAUTOPLAY_WEAPONS_ALL;
+  if (!_ap.ulWeapons) _ap.ulWeapons = IOSAUTOPLAY_WEAPONS_ALL;
+  _ap.bHud = [d boolForKey:IOSTOUCH_AP_HUD_KEY] ? 1 : 0;
+  _iApSceneBefore = _iApScene;
+  IOSTouch_AutoplaySeconds();
+}
+
+static void IOSTouch_AutoplaySave(void)
+{
+  IOSTouch_AutoplaySeconds();
+  NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+  [d setInteger:_ap.iLevel forKey:IOSTOUCH_AP_LEVEL_KEY];
+  [d setInteger:_ap.iDifficulty forKey:IOSTOUCH_AP_DIFFICULTY_KEY];
+  [d setInteger:_ap.iCrowd forKey:IOSTOUCH_AP_CROWD_KEY];
+  [d setBool:(_ap.bAlarm ? YES : NO) forKey:IOSTOUCH_AP_ALARM_KEY];
+  [d setInteger:_iApScene forKey:IOSTOUCH_AP_SCENE_KEY];
+  [d setInteger:_iApCustom forKey:IOSTOUCH_AP_CUSTOM_KEY];
+  [d setInteger:(NSInteger)_ap.ulWeapons forKey:IOSTOUCH_AP_WEAPONS_KEY];
+  [d setBool:(_ap.bHud ? YES : NO) forKey:IOSTOUCH_AP_HUD_KEY];
+  _uApChanges++;
+}
+
+void IOSTouch_GetAutoplayOptions(IOSAutoplayOptions *pOptions)
+{
+  if (!pOptions) return;
+  IOSTouch_AutoplayLoad();
+  IOSTouch_AutoplaySeconds();
+  *pOptions = _ap;
+  // (a level picked that this game doesn't have: shuffled)
+  if (pOptions->iLevel > _hud.ctLevels) pOptions->iLevel = 0;
+}
+
+// Whether it can be shown: a single-player game being played
+static int IOSTouch_AutoplayCanShow(void)
+{
+  return _iMode == IOSTOUCH_GAMEPLAY && _hud.bValid && _hud.ctLevels > 0;
+}
+
+// The tray's AUTOPLAY: its panel opens (the tray closes, and every finger
+// down is let go of)
+static void IOSTouch_OpenAutoplay(void)
+{
+  IOSTouch_SetTrayOpen(0);
+  if (!IOSTouch_AutoplayCanShow()) return;
+  IOSTouch_AutoplayLoad();
+  IOSTouch_DropTouches(NULL);
+  _iApPanel = APPANEL_MAIN;
+  _uApChanges++;
+}
+
+static void IOSTouch_CloseAutoplay(void)
+{
+  // (the custom length's slider left without DONE: SCENES as it was)
+  if (_iApPanel == APPANEL_SECONDS) {
+    _iApScene = _iApSceneBefore;
+    IOSTouch_AutoplaySave();
+  }
+  if (_bLevelListForAutoplay) {
+    _bLevelListForAutoplay = 0;
+    _bLevelListOpen = 0;
+  }
+  _iApPanel = APPANEL_NONE;
+}
+
+// START: the panel closes and the main loop starts the show
+static void IOSTouch_AutoplayStart(void)
+{
+  if (_iApPanel != APPANEL_MAIN) return;
+  IOSTouch_CloseAutoplay();
+  if (IOSTouch_AutoplayCanShow()) _iRequests |= IOSTOUCH_REQ_AUTOPLAY;
+}
+
+// A row tapped: on its right half (iDir 1) or its left (-1)
+static void IOSTouch_AutoplayStep(int iRow, int iDir)
+{
+  if (_iApPanel != APPANEL_MAIN) return;
+  iDir = (iDir < 0) ? -1 : 1;
+  switch (iRow) {
+    case APROW_LEVELS:
+      // (two values: either way goes to the other one; PICK ONE picks)
+      if (_ap.iLevel > 0) {
+        _ap.iLevel = 0;
+      }
+      else if (_hud.ctLevels > 0) {
+        _bLevelListForAutoplay = 1;
+        _bLevelListOpen = 1;
+        _iApPanel = APPANEL_LEVELS;
+      }
+      break;
+    case APROW_DIFFICULTY: _ap.iDifficulty = (_ap.iDifficulty + iDir + 3) % 3; break;
+    case APROW_CROWD:      _ap.iCrowd = (_ap.iCrowd - 1 + iDir + 3) % 3 + 1; break;
+    case APROW_ALARM:      _ap.bAlarm = !_ap.bAlarm; break;
+    case APROW_SCENES:
+      _iApSceneBefore = _iApScene;
+      _iApScene = (_iApScene + iDir + IOSTOUCH_AP_CUSTOM + 1) % (IOSTOUCH_AP_CUSTOM + 1);
+      if (_iApScene == IOSTOUCH_AP_CUSTOM) _iApPanel = APPANEL_SECONDS;
+      break;
+    case APROW_WEAPONS:
+      _ulApPicking = _ap.ulWeapons;
+      _iApPanel = APPANEL_WEAPONS;
+      break;
+    case APROW_HUD:        _ap.bHud = !_ap.bHud; break;
+    default: return;
+  }
+  IOSTouch_AutoplaySave();
+}
+
+// The list of levels, opened for LEVELS: level iLevel tapped (it closes,
+// back to the panel, which names it)
+static void IOSTouch_AutoplayPickedLevel(int iLevel)
+{
+  _bLevelListOpen = 0;
+  _bLevelListForAutoplay = 0;
+  if (_iApPanel == APPANEL_LEVELS) _iApPanel = APPANEL_MAIN;
+  if (iLevel >= 1 && iLevel <= _hud.ctLevels) _ap.iLevel = iLevel;
+  IOSTouch_AutoplaySave();
+}
+
+// The weapon picker: weapon number iWeapon (1..10) ticked or unticked (the
+// last one ticked stays); ALL; DONE (kept); its X (dropped)
+static void IOSTouch_AutoplayToggleWeapon(int iWeapon)
+{
+  if (_iApPanel != APPANEL_WEAPONS || iWeapon < 1 || iWeapon > 10) return;
+  const unsigned int ul = _ulApPicking ^ (1u << iWeapon);
+  if (ul & IOSAUTOPLAY_WEAPONS_ALL) _ulApPicking = ul;
+  _uApChanges++;
+}
+
+static void IOSTouch_AutoplayAllWeapons(void)
+{
+  if (_iApPanel != APPANEL_WEAPONS) return;
+  _ulApPicking = IOSAUTOPLAY_WEAPONS_ALL;
+  _uApChanges++;
+}
+
+static void IOSTouch_AutoplayWeaponsDone(int bKeep)
+{
+  if (_iApPanel != APPANEL_WEAPONS) return;
+  if (bKeep && (_ulApPicking & IOSAUTOPLAY_WEAPONS_ALL)) _ap.ulWeapons = _ulApPicking & IOSAUTOPLAY_WEAPONS_ALL;
+  _iApPanel = APPANEL_MAIN;
+  IOSTouch_AutoplaySave();
+}
+
+// The custom length's slider: moved (seconds, kept to 5 s steps); DONE
+// (CUSTOM, at that length); its X (SCENES as it was)
+static void IOSTouch_AutoplaySetCustom(float fSeconds)
+{
+  const int i = (int)lroundf(fSeconds / IOSTOUCH_AP_SECONDS_STEP) * IOSTOUCH_AP_SECONDS_STEP;
+  _iApCustom = IOSTouch_ClampInt(i, IOSTOUCH_AP_SECONDS_MIN, IOSTOUCH_AP_SECONDS_MAX);
+}
+
+static void IOSTouch_AutoplaySecondsDone(int bKeep)
+{
+  if (_iApPanel != APPANEL_SECONDS) return;
+  _iApScene = bKeep ? IOSTOUCH_AP_CUSTOM : _iApSceneBefore;
+  _iApPanel = APPANEL_MAIN;
+  IOSTouch_AutoplaySave();
+}
+
+// Once a frame: the panel closes once the game isn't being played
+static void IOSTouch_TickAutoplay(void)
+{
+  if (_iApPanel != APPANEL_NONE && !IOSTouch_AutoplayCanShow()) IOSTouch_CloseAutoplay();
+}
+
+// A row's label and value, as shown ("LEVELS", "SHUFFLE ALL")
+static void IOSTouch_AutoplayRowText(int iRow, char *strLabel, int ctLabel, char *strValue, int ctValue)
+{
+  static const char *aLabels[APROW_COUNT] = { "LEVELS", "DIFFICULTY", "CROWD", "ALARM", "SCENES", "WEAPONS", "HUD" };
+  static const char *aDifficulties[3] = { "EASY", "MEDIUM", "HARD" };
+  snprintf(strLabel, ctLabel, "%s", (iRow >= 0 && iRow < APROW_COUNT) ? aLabels[iRow] : "");
+  strValue[0] = 0;
+  switch (iRow) {
+    case APROW_LEVELS:
+      if (_ap.iLevel > 0) {
+        char strName[128], strFile[256];
+        if (IOSCheatGame_LevelInfo(_ap.iLevel, strName, sizeof(strName), strFile, sizeof(strFile)) && strName[0]) {
+          snprintf(strValue, ctValue, "%s", strName);
+        }
+        else {
+          snprintf(strValue, ctValue, "LEVEL %d", _ap.iLevel);
+        }
+      }
+      else {
+        snprintf(strValue, ctValue, "SHUFFLE ALL");
+      }
+      break;
+    case APROW_DIFFICULTY: snprintf(strValue, ctValue, "%s", aDifficulties[IOSTouch_ClampInt(_ap.iDifficulty, 0, 2)]); break;
+    case APROW_CROWD:      snprintf(strValue, ctValue, "%d\xC3\x97", _ap.iCrowd); break; // (a times sign)
+    case APROW_ALARM:      snprintf(strValue, ctValue, "%s", _ap.bAlarm ? "ON" : "OFF"); break;
+    case APROW_SCENES:
+      snprintf(strValue, ctValue, "%d SEC", (_iApScene < IOSTOUCH_AP_PRESETS) ? _aiApPresets[_iApScene] : _iApCustom);
+      break;
+    case APROW_WEAPONS: {
+      int n = 0;
+      for (int w = 1; w <= 10; w++) n += (_ap.ulWeapons >> w) & 1;
+      if (_ap.ulWeapons == IOSAUTOPLAY_WEAPONS_ALL) snprintf(strValue, ctValue, "ALL");
+      else snprintf(strValue, ctValue, "%d PICKED", n);
+      break;
+    }
+    case APROW_HUD:        snprintf(strValue, ctValue, "%s", _ap.bHud ? "ON" : "OFF"); break;
+    default: break;
+  }
 }
 
 // A finger lifted from CHEAT, JUMP or USE: JUMP's quick taps, two of which
@@ -1882,7 +2163,7 @@ static void IOSTouch_CheatLifted(IOSTouchSlot *s, double x, double y, int bCance
 static void IOSTouch_TickCheat(double now, double known)
 {
   // (the cheat off, a network game, the console open, CAMERA busy...)
-  if (_bLevelListOpen && (!IOSTouch_LevelPickShows() || !IOSTouch_CheatCanAct())) IOSTouch_CloseLevelList();
+  if (_bLevelListOpen && !_bLevelListForAutoplay && (!IOSTouch_LevelPickShows() || !IOSTouch_CheatCanAct())) IOSTouch_CloseLevelList();
   // the tray with LEVEL in it while it shows, without it otherwise (the view
   // moves its buttons along as it sees this changed)
   if (IOSTouch_LevelPickShows() != _bTrayLevelPlaced) IOSTouch_PlaceTray(IOSTouch_LevelPickShows());
@@ -1959,7 +2240,8 @@ static void IOSTouch_TickCheat(double now, double known)
 // Freeze and the cinematic burst
 int IOSTouch_HoldsGame(void)
 {
-  return (_bWheelOpen || _bLevelListOpen || _bPhotosAsking || _iCamStage != CAM_NONE) && _iMode == IOSTOUCH_GAMEPLAY;
+  return (_bWheelOpen || _bLevelListOpen || _bPhotosAsking || _iCamStage != CAM_NONE || _iApPanel != APPANEL_NONE)
+         && _iMode == IOSTOUCH_GAMEPLAY;
 }
 
 // Whether the game would take a pick now: the player there, alive, no
@@ -2848,6 +3130,14 @@ static void IOSTouch_TouchBegan(const void *touch, double x, double y, double W,
     s->button = -1;
     return;
   }
+  // AUTOPLAY's panel open (its weapons, its scene length): the panel takes
+  // the touches on it; one anywhere else closes it all
+  if (_iApPanel != APPANEL_NONE && !_bLevelListOpen) {
+    IOSTouch_CloseAutoplay();
+    s->role = ROLE_IGNORED;
+    s->button = -1;
+    return;
+  }
   // The cheat's list of levels open: the list itself takes the touches on it
   // (the view's level panel); one anywhere else closes it, and does nothing
   // more until it lifts
@@ -3641,6 +3931,8 @@ static void IOSTouch_ResetTouches(int bReading)
   _fCheatRing = 0.0f;
   _afCheatActRing[0] = _afCheatActRing[1] = 0.0f;
   _bLevelListOpen = 0;
+  _bLevelListForAutoplay = 0;
+  _iApPanel = APPANEL_NONE;
   _fLookRing = _fOpacityRing = 0.0f;
   IOSTouch_ResetShared(bReading);
 }
@@ -3858,6 +4150,36 @@ typedef struct {
   NSArray<NSString *> *aLevelNames;
   NSArray<NSString *> *aLevelFiles;
   int iLevelNow;
+  UIColor *levelAccent; // (CHEAT's gold; AUTOPLAY's red when it picks for AUTOPLAY)
+  // AUTOPLAY's panel (MENU's tray's AUTOPLAY): the rows and START; the
+  // weapon picker; the custom length's slider; which of them shows, the
+  // change count they were last filled in at, the pictures shown (bit n:
+  // weapon number n)
+  IOSTouchLevelPanel *apPanel;
+  UILabel *apTitle;
+  UIButton *aApRows[APROW_COUNT];
+  UILabel *aApRowLabels[APROW_COUNT];
+  UILabel *aApRowValues[APROW_COUNT];
+  UILabel *apHint;
+  UIButton *apStart;
+  IOSTouchLevelPanel *apWeaponsPanel;
+  UILabel *apWeaponsTitle;
+  UIButton *aApWeapons[10];
+  UIImageView *aApWeaponIcons[10];
+  UILabel *aApWeaponNames[10];
+  UILabel *aApWeaponTicks[10];
+  UILabel *apWeaponsHint;
+  UIButton *apAll;
+  UIButton *apDone;
+  IOSTouchLevelPanel *apSecondsPanel;
+  UILabel *apSecondsTitle;
+  UILabel *apSecondsValue;
+  UISlider *apSlider;
+  UILabel *apSecondsHint;
+  UIButton *apSecondsDone;
+  int iApShown;
+  unsigned int uApChangesShown;
+  unsigned int ulApIconsShown;
   // The tray's LOOK: its hold's ring, the speed its label says and the app's
   // settings have, the times it went back to 1x already felt (a thump each)
   CAShapeLayer *lookRing;
@@ -3884,6 +4206,7 @@ typedef struct {
 - (void)resetAll;
 - (void)tick;
 - (void)syncLevels;
+- (void)syncAutoplay;
 - (void)placeMessages;
 - (void)refreshButtonLooks;
 - (void)refreshStick;
@@ -4068,6 +4391,7 @@ static CAShapeLayer *IOSTouch_MakeHoldRing(CGFloat r)
     [self makeCamera];
     [self makeCheat];
     [self makeLevelPanel];
+    [self makeAutoplayPanel];
     [self refreshButtonLooks];
   }
   return self;
@@ -4495,6 +4819,7 @@ static void IOSTouch_CheatEmblemPaths(CGFloat cx, CGFloat cy, CGFloat r, UIBezie
 
   [self placeMessages];
   if (!levelPanel.hidden) [self placeLevelPanel];
+  [self placeAutoplay];
   // the open weapon wheel round the new middle
   bWheelRebuild = 1;
   if (bWheelShown) [self refreshWheel];
@@ -4673,6 +4998,7 @@ static void IOSTouch_CheatEmblemPaths(CGFloat cx, CGFloat cy, CGFloat r, UIBezie
   [self syncWheel];
   [self refreshCamera];
   [self syncLevels];
+  [self syncAutoplay];
 }
 
 // ------------------------------------------------------------ weapon wheel
@@ -5066,7 +5392,9 @@ static CGImageRef IOSTouch_MakeIconImage(const unsigned char *pub, int w, int h)
   [self setRing:aWheelRings[1] progress:_afWheelRing[1]];
   [self refreshMessages];
   [self syncWheel]; // (a hold may have opened the weapon wheel, or the game closed it)
+  IOSTouch_TickAutoplay();
   [self syncLevels]; // (the list of levels closes once LEVEL is gone)
+  [self syncAutoplay];
   // LOOK held back to 1x: a thump, and its label says so
   if (ctLookResetsFelt != _ctLookResets) {
     ctLookResetsFelt = _ctLookResets;
@@ -5114,6 +5442,25 @@ static CGImageRef IOSTouch_MakeIconImage(const unsigned char *pub, int w, int h)
 static UIColor *IOSTouch_CheatGold(CGFloat alpha)
 {
   return [UIColor colorWithRed:1.0 green:0.68 blue:0.18 alpha:alpha];
+}
+
+// (AUTOPLAY's: the HUD's red, its monospaced lettering, spaced-out capitals)
+static UIColor *IOSTouch_AutoplayRed(CGFloat alpha)
+{
+  return [UIColor colorWithRed:0.90 green:0.22 blue:0.16 alpha:alpha];
+}
+
+static UIFont *IOSTouch_AutoplayFont(CGFloat size, UIFontWeight weight)
+{
+  return [UIFont monospacedSystemFontOfSize:size weight:weight];
+}
+
+// Spaced-out capitals, as the mock-up's title and buttons
+static NSAttributedString *IOSTouch_AutoplaySpaced(NSString *str, UIFont *font, UIColor *colour, CGFloat kern)
+{
+  return [[NSAttributedString alloc] initWithString:str
+                                         attributes:@{ NSFontAttributeName: font, NSForegroundColorAttributeName: colour,
+                                                       NSKernAttributeName: @(kern) }];
 }
 
 - (void)makeLevelPanel
@@ -5192,8 +5539,12 @@ static UIColor *IOSTouch_CheatGold(CGFloat alpha)
     }
     aLevelNames = names;
     aLevelFiles = files;
-    iLevelNow = IOSCheatGame_CurrentLevel();
-    levelTitle.text = [NSString stringWithFormat:@"LEVEL  (%d)", (int)names.count];
+    // (picking AUTOPLAY's level: in its red, the one picked before ticked)
+    levelAccent = _bLevelListForAutoplay ? IOSTouch_AutoplayRed(1.0) : IOSTouch_CheatGold(1.0);
+    levelPanel.layer.borderColor = (_bLevelListForAutoplay ? IOSTouch_AutoplayRed(0.9) : IOSTouch_CheatGold(0.8)).CGColor;
+    levelTitle.textColor = levelAccent;
+    iLevelNow = (_bLevelListForAutoplay && _ap.iLevel > 0) ? _ap.iLevel : IOSCheatGame_CurrentLevel();
+    levelTitle.text = [NSString stringWithFormat:(_bLevelListForAutoplay ? @"AUTOPLAY LEVEL  (%d)" : @"LEVEL  (%d)"), (int)names.count];
     [self placeLevelPanel];
     [levelTable reloadData];
     levelPanel.hidden = NO;
@@ -5218,6 +5569,7 @@ static UIColor *IOSTouch_CheatGold(CGFloat alpha)
 {
   IOSTouch_CloseLevelList();
   [self syncLevels];
+  [self syncAutoplay]; // (AUTOPLAY's: back to its panel)
 }
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section
@@ -5235,18 +5587,19 @@ static UIColor *IOSTouch_CheatGold(CGFloat alpha)
     cell.textLabel.textColor = [UIColor colorWithWhite:1.0 alpha:0.92];
     cell.detailTextLabel.font = [UIFont systemFontOfSize:11];
     cell.detailTextLabel.textColor = [UIColor colorWithWhite:1.0 alpha:0.5];
-    cell.tintColor = IOSTouch_CheatGold(1.0);
     UIView *sel = [[UIView alloc] init];
-    sel.backgroundColor = IOSTouch_CheatGold(0.3);
     cell.selectedBackgroundView = sel;
   }
+  UIColor *accent = levelAccent ?: IOSTouch_CheatGold(1.0);
+  cell.tintColor = accent;
+  cell.selectedBackgroundView.backgroundColor = [accent colorWithAlphaComponent:0.3];
   const NSInteger row = indexPath.row;
   if (row < 0 || row >= (NSInteger)aLevelNames.count) return cell;
-  // the number in CHEAT's gold, then the name
+  // the number in the accent (CHEAT's gold, AUTOPLAY's red), then the name
   NSString *num = [NSString stringWithFormat:@"%d.  ", (int)row + 1];
   UIFont *font = IOSTouch_TrayFont(16);
   NSMutableAttributedString *text = [[NSMutableAttributedString alloc] initWithString:num
-                                       attributes:@{ NSFontAttributeName: font, NSForegroundColorAttributeName: IOSTouch_CheatGold(1.0) }];
+                                       attributes:@{ NSFontAttributeName: font, NSForegroundColorAttributeName: accent }];
   [text appendAttributedString:[[NSAttributedString alloc] initWithString:aLevelNames[row]
                                   attributes:@{ NSFontAttributeName: font,
                                                 NSForegroundColorAttributeName: [UIColor colorWithWhite:1.0 alpha:0.92] }]];
@@ -5262,6 +5615,412 @@ static UIColor *IOSTouch_CheatGold(CGFloat alpha)
   [cheatTick selectionChanged];
   IOSTouch_PickLevel((int)indexPath.row + 1);
   [self syncLevels];
+  [self syncAutoplay];
+}
+
+// ------------------------------------------------------------- AUTOPLAY
+// Its panel (IOSTouch_OpenAutoplay), in the weapon wheel's look: gunmetal,
+// the HUD's red round the edge and in the title, monospaced lettering. Each
+// part (the rows and START, the weapon picker, the custom length's slider)
+// is a panel of its own that keeps its touches; one shows at a time.
+
+- (IOSTouchLevelPanel *)apMakePanel:(NSString *)title titleLabel:(UILabel * __strong *)pTitle close:(SEL)closeAction
+{
+  IOSTouchLevelPanel *p = [[IOSTouchLevelPanel alloc] initWithFrame:CGRectZero];
+  p.backgroundColor = [UIColor colorWithRed:0.16 green:0.17 blue:0.20 alpha:0.97];
+  p.layer.cornerRadius = 22.0;
+  p.layer.borderWidth = 3.0;
+  p.layer.borderColor = [UIColor colorWithRed:0.75 green:0.16 blue:0.10 alpha:0.95].CGColor;
+  p.clipsToBounds = YES;
+  p.hidden = YES;
+  UILabel *t = [[UILabel alloc] initWithFrame:CGRectZero];
+  t.attributedText = IOSTouch_AutoplaySpaced(title, IOSTouch_AutoplayFont(21, UIFontWeightHeavy), IOSTouch_AutoplayRed(1.0), 5.0);
+  t.textAlignment = NSTextAlignmentCenter;
+  t.adjustsFontSizeToFitWidth = YES;
+  t.minimumScaleFactor = 0.6;
+  [p addSubview:t];
+  *pTitle = t;
+  UIButton *x = [UIButton buttonWithType:UIButtonTypeSystem];
+  UIImageSymbolConfiguration *cfg = [UIImageSymbolConfiguration configurationWithPointSize:14 weight:UIImageSymbolWeightBold];
+  UIImage *xi = [UIImage systemImageNamed:@"xmark" withConfiguration:cfg];
+  if (xi) [x setImage:xi forState:UIControlStateNormal];
+  else [x setTitle:@"X" forState:UIControlStateNormal];
+  x.tintColor = [UIColor colorWithWhite:1.0 alpha:0.85];
+  x.layer.borderWidth = 1.5;
+  x.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.35].CGColor;
+  x.tag = 1000; // (placed by apPlaceTitle)
+  [x addTarget:self action:closeAction forControlEvents:UIControlEventTouchUpInside];
+  [p addSubview:x];
+  [self addSubview:p];
+  return p;
+}
+
+// A pill button: red and filled (START, DONE), or outlined (ALL)
+- (UIButton *)apMakeButton:(NSString *)title red:(BOOL)bRed action:(SEL)action inside:(UIView *)parent
+{
+  UIButton *b = [UIButton buttonWithType:UIButtonTypeCustom];
+  [b setAttributedTitle:IOSTouch_AutoplaySpaced(title, IOSTouch_AutoplayFont(17, UIFontWeightHeavy), [UIColor whiteColor], 4.0)
+               forState:UIControlStateNormal];
+  b.backgroundColor = bRed ? IOSTouch_AutoplayRed(1.0) : [UIColor colorWithWhite:1.0 alpha:0.04];
+  b.layer.borderWidth = bRed ? 0.0 : 1.5;
+  b.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.4].CGColor;
+  if (bRed) {
+    b.layer.shadowColor = IOSTouch_AutoplayRed(1.0).CGColor;
+    b.layer.shadowOpacity = 0.5;
+    b.layer.shadowRadius = 8.0;
+    b.layer.shadowOffset = CGSizeZero;
+  }
+  [b addTarget:self action:action forControlEvents:UIControlEventTouchUpInside];
+  [parent addSubview:b];
+  return b;
+}
+
+static UILabel *IOSTouch_AutoplayHint(NSString *str, UIView *parent)
+{
+  UILabel *l = [[UILabel alloc] initWithFrame:CGRectZero];
+  l.text = str;
+  l.font = IOSTouch_AutoplayFont(10, UIFontWeightRegular);
+  l.textColor = [UIColor colorWithWhite:1.0 alpha:0.45];
+  l.textAlignment = NSTextAlignmentCenter;
+  l.adjustsFontSizeToFitWidth = YES;
+  l.minimumScaleFactor = 0.7;
+  [parent addSubview:l];
+  return l;
+}
+
+- (void)makeAutoplayPanel
+{
+  // the rows and START
+  apPanel = [self apMakePanel:@"AUTOPLAY" titleLabel:&apTitle close:@selector(apCloseTapped)];
+  for (int i = 0; i < APROW_COUNT; i++) {
+    UIButton *r = [UIButton buttonWithType:UIButtonTypeCustom];
+    r.backgroundColor = [UIColor colorWithRed:0.10 green:0.11 blue:0.13 alpha:1.0];
+    r.layer.cornerRadius = 10.0;
+    r.layer.borderWidth = 1.0;
+    r.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.07].CGColor;
+    r.tag = i;
+    [r addTarget:self action:@selector(apRowTapped:forEvent:) forControlEvents:UIControlEventTouchUpInside];
+    UILabel *l = [[UILabel alloc] initWithFrame:CGRectZero];
+    l.userInteractionEnabled = NO;
+    l.adjustsFontSizeToFitWidth = YES;
+    l.minimumScaleFactor = 0.6;
+    [r addSubview:l];
+    UILabel *v = [[UILabel alloc] initWithFrame:CGRectZero];
+    v.userInteractionEnabled = NO;
+    v.textAlignment = NSTextAlignmentRight;
+    v.adjustsFontSizeToFitWidth = YES;
+    v.minimumScaleFactor = 0.5;
+    v.lineBreakMode = NSLineBreakByTruncatingMiddle;
+    [r addSubview:v];
+    aApRows[i] = r;
+    aApRowLabels[i] = l;
+    aApRowValues[i] = v;
+    [apPanel addSubview:r];
+  }
+  apHint = IOSTouch_AutoplayHint(@"tap a row's right side for the next value, its left for the one before · tap the screen to stop the show", apPanel);
+  apStart = [self apMakeButton:@"START" red:YES action:@selector(apStartTapped) inside:apPanel];
+
+  // the weapon picker: the game's own pictures (the weapon wheel's)
+  apWeaponsPanel = [self apMakePanel:@"WEAPONS" titleLabel:&apWeaponsTitle close:@selector(apWeaponsCloseTapped)];
+  static NSString *const aNames[10] = { @"FISTS", @"BRYAR PISTOL", @"E-11 RIFLE", @"DETONATORS", @"REPEATER",
+                                        @"JEERON FUSION", @"MORTAR GUN", @"MINES", @"CONCUSSION", @"ASSAULT CANNON" };
+  for (int i = 0; i < 10; i++) {
+    UIButton *b = [UIButton buttonWithType:UIButtonTypeCustom];
+    b.layer.cornerRadius = 12.0;
+    b.layer.borderWidth = 2.0;
+    b.tag = i + 1; // (the weapon number)
+    [b addTarget:self action:@selector(apWeaponTapped:) forControlEvents:UIControlEventTouchUpInside];
+    UIImageView *iv = [[UIImageView alloc] initWithFrame:CGRectZero];
+    iv.contentMode = UIViewContentModeScaleAspectFit;
+    iv.layer.magnificationFilter = kCAFilterNearest; // (the game's pixels, sharp)
+    iv.userInteractionEnabled = NO;
+    [b addSubview:iv];
+    UILabel *n = [[UILabel alloc] initWithFrame:CGRectZero];
+    n.text = aNames[i];
+    n.font = IOSTouch_AutoplayFont(11, UIFontWeightSemibold);
+    n.textAlignment = NSTextAlignmentCenter;
+    n.adjustsFontSizeToFitWidth = YES;
+    n.minimumScaleFactor = 0.6;
+    n.userInteractionEnabled = NO;
+    [b addSubview:n];
+    UILabel *t = [[UILabel alloc] initWithFrame:CGRectZero];
+    t.text = @"✓";
+    t.font = [UIFont boldSystemFontOfSize:14];
+    t.textColor = IOSTouch_AutoplayRed(1.0);
+    t.textAlignment = NSTextAlignmentRight;
+    t.userInteractionEnabled = NO;
+    [b addSubview:t];
+    aApWeapons[i] = b;
+    aApWeaponIcons[i] = iv;
+    aApWeaponNames[i] = n;
+    aApWeaponTicks[i] = t;
+    [apWeaponsPanel addSubview:b];
+  }
+  apWeaponsHint = IOSTouch_AutoplayHint(@"tap to tick or untick · Kyle goes round the ticked ones", apWeaponsPanel);
+  apAll = [self apMakeButton:@"ALL" red:NO action:@selector(apAllTapped) inside:apWeaponsPanel];
+  apDone = [self apMakeButton:@"DONE" red:YES action:@selector(apWeaponsDoneTapped) inside:apWeaponsPanel];
+
+  // the custom length's slider
+  apSecondsPanel = [self apMakePanel:@"SCENE LENGTH" titleLabel:&apSecondsTitle close:@selector(apSecondsCloseTapped)];
+  apSecondsValue = [[UILabel alloc] initWithFrame:CGRectZero];
+  apSecondsValue.font = IOSTouch_AutoplayFont(24, UIFontWeightSemibold);
+  apSecondsValue.textColor = [UIColor whiteColor];
+  apSecondsValue.textAlignment = NSTextAlignmentCenter;
+  [apSecondsPanel addSubview:apSecondsValue];
+  apSlider = [[UISlider alloc] initWithFrame:CGRectZero];
+  apSlider.minimumValue = IOSTOUCH_AP_SECONDS_MIN;
+  apSlider.maximumValue = IOSTOUCH_AP_SECONDS_MAX;
+  apSlider.continuous = YES;
+  apSlider.minimumTrackTintColor = IOSTouch_AutoplayRed(1.0);
+  apSlider.maximumTrackTintColor = [UIColor colorWithWhite:1.0 alpha:0.25];
+  [apSlider addTarget:self action:@selector(apSliderMoved:) forControlEvents:UIControlEventValueChanged];
+  [apSecondsPanel addSubview:apSlider];
+  apSecondsHint = IOSTouch_AutoplayHint(@"5 s to 10 min, in 5 s steps · a scene ends sooner once its group is down", apSecondsPanel);
+  apSecondsDone = [self apMakeButton:@"DONE" red:YES action:@selector(apSecondsDoneTapped) inside:apSecondsPanel];
+
+  iApShown = APPANEL_NONE;
+  uApChangesShown = 0;
+  ulApIconsShown = 0;
+}
+
+// A panel's frame: in the middle of the screen's safe area, at most w x h
+- (CGRect)apFrameWide:(CGFloat)wMax high:(CGFloat)hMax
+{
+  const CGRect b = self.bounds;
+  const UIEdgeInsets in = self.safeAreaInsets;
+  const CGFloat left = fmax(in.left, 8.0), right = fmax(in.right, 8.0);
+  const CGFloat top = fmax(in.top, 8.0), bottom = fmax(in.bottom, 8.0);
+  const CGFloat w = fmax(200.0, fmin(wMax, b.size.width - left - right - 16.0));
+  const CGFloat h = fmax(160.0, fmin(hMax, b.size.height - top - bottom - 8.0));
+  return CGRectMake(left + (b.size.width - left - right - w) * 0.5, top + (b.size.height - top - bottom - h) * 0.5, w, h);
+}
+
+// Its title, along the top, and its X at the top right
+- (void)apPlaceTitle:(UILabel *)title inPanel:(UIView *)p
+{
+  const CGFloat w = p.bounds.size.width;
+  title.frame = CGRectMake(56, 10, w - 112, 30);
+  UIView *x = [p viewWithTag:1000];
+  x.frame = CGRectMake(w - 50, 8, 36, 36);
+  x.layer.cornerRadius = 18.0;
+}
+
+- (void)placeAutoplay
+{
+  // the rows and START: four rows on the left, three on the right
+  {
+    apPanel.frame = [self apFrameWide:560.0 high:350.0];
+    const CGFloat w = apPanel.bounds.size.width, h = apPanel.bounds.size.height;
+    [self apPlaceTitle:apTitle inPanel:apPanel];
+    const CGFloat startH = 40.0, hintH = 14.0;
+    const CGFloat top = 48.0, bottom = h - 12.0 - startH - 6.0 - hintH - 4.0;
+    const CGFloat gap = 7.0, colGap = 12.0, margin = 16.0;
+    const CGFloat rowH = fmin(44.0, (bottom - top - 3.0 * gap) / 4.0);
+    const CGFloat colW = (w - 2.0 * margin - colGap) * 0.5;
+    for (int i = 0; i < APROW_COUNT; i++) {
+      const int bRight = i >= APROW_SCENES;
+      const int k = bRight ? i - APROW_SCENES : i;
+      const CGRect r = CGRectMake(margin + (bRight ? colW + colGap : 0.0), top + k * (rowH + gap), colW, rowH);
+      aApRows[i].frame = r;
+      aApRowLabels[i].frame = CGRectMake(12, 0, r.size.width * 0.36, rowH);
+      aApRowValues[i].frame = CGRectMake(r.size.width * 0.36 + 14, 0, r.size.width * 0.64 - 24, rowH);
+    }
+    apHint.frame = CGRectMake(margin, bottom + 4.0, w - 2.0 * margin, hintH);
+    const CGFloat sw = fmin(200.0, w * 0.4);
+    apStart.frame = CGRectMake((w - sw) * 0.5, h - 12.0 - startH, sw, startH);
+    apStart.layer.cornerRadius = startH * 0.5;
+  }
+  // the weapon picker: two rows of five
+  {
+    apWeaponsPanel.frame = [self apFrameWide:560.0 high:350.0];
+    const CGFloat w = apWeaponsPanel.bounds.size.width, h = apWeaponsPanel.bounds.size.height;
+    [self apPlaceTitle:apWeaponsTitle inPanel:apWeaponsPanel];
+    const CGFloat btnH = 40.0, hintH = 14.0, margin = 16.0, gap = 8.0;
+    const CGFloat top = 48.0, bottom = h - 12.0 - btnH - 6.0 - hintH - 4.0;
+    const CGFloat boxW = (w - 2.0 * margin - 4.0 * gap) / 5.0, boxH = (bottom - top - gap) / 2.0;
+    for (int i = 0; i < 10; i++) {
+      const CGRect r = CGRectMake(margin + (i % 5) * (boxW + gap), top + (i / 5) * (boxH + gap), boxW, boxH);
+      aApWeapons[i].frame = r;
+      const CGFloat nameH = 16.0, icon = fmax(10.0, fmin(boxW - 16.0, boxH - nameH - 16.0));
+      aApWeaponIcons[i].frame = CGRectMake((boxW - icon) * 0.5, 6.0, icon, icon);
+      aApWeaponNames[i].frame = CGRectMake(4, boxH - nameH - 5.0, boxW - 8, nameH);
+      aApWeaponTicks[i].frame = CGRectMake(boxW - 22, 3, 18, 16);
+    }
+    apWeaponsHint.frame = CGRectMake(margin, bottom + 4.0, w - 2.0 * margin, hintH);
+    const CGFloat bw = fmin(150.0, (w - 2.0 * margin - 24.0) * 0.5);
+    apAll.frame = CGRectMake(w * 0.5 - 12.0 - bw, h - 12.0 - btnH, bw, btnH);
+    apDone.frame = CGRectMake(w * 0.5 + 12.0, h - 12.0 - btnH, bw, btnH);
+    apAll.layer.cornerRadius = apDone.layer.cornerRadius = btnH * 0.5;
+  }
+  // the custom length's slider
+  {
+    apSecondsPanel.frame = [self apFrameWide:420.0 high:230.0];
+    const CGFloat w = apSecondsPanel.bounds.size.width, h = apSecondsPanel.bounds.size.height;
+    [self apPlaceTitle:apSecondsTitle inPanel:apSecondsPanel];
+    const CGFloat btnH = 40.0, margin = 24.0;
+    const CGFloat midY = 48.0 + (h - 48.0 - 12.0 - btnH - 18.0) * 0.5;
+    apSecondsValue.frame = CGRectMake(margin, midY - 38.0, w - 2.0 * margin, 30.0);
+    apSlider.frame = CGRectMake(margin, midY - 4.0, w - 2.0 * margin, 30.0);
+    apSecondsHint.frame = CGRectMake(margin, midY + 28.0, w - 2.0 * margin, 14.0);
+    const CGFloat bw = fmin(160.0, w * 0.45);
+    apSecondsDone.frame = CGRectMake((w - bw) * 0.5, h - 12.0 - btnH, bw, btnH);
+    apSecondsDone.layer.cornerRadius = btnH * 0.5;
+  }
+}
+
+// The rows say what's set
+- (void)apRefreshRows
+{
+  for (int i = 0; i < APROW_COUNT; i++) {
+    char strLabel[32], strValue[160];
+    IOSTouch_AutoplayRowText(i, strLabel, sizeof(strLabel), strValue, sizeof(strValue));
+    NSString *label = [NSString stringWithUTF8String:strLabel] ?: @"";
+    NSString *value = [NSString stringWithUTF8String:strValue];
+    // (a level's name is the game's, in its own 8-bit letters)
+    if (!value) value = [NSString stringWithCString:strValue encoding:NSWindowsCP1252StringEncoding] ?: @"";
+    aApRowLabels[i].attributedText = IOSTouch_AutoplaySpaced(label, IOSTouch_AutoplayFont(12, UIFontWeightMedium),
+                                                             [UIColor colorWithWhite:1.0 alpha:0.6], 2.0);
+    UIFont *f = IOSTouch_AutoplayFont(15, UIFontWeightSemibold);
+    UIFont *fc = IOSTouch_AutoplayFont(15, UIFontWeightBold);
+    NSMutableAttributedString *v = [[NSMutableAttributedString alloc]
+        initWithString:@"‹  " attributes:@{ NSFontAttributeName: fc, NSForegroundColorAttributeName: IOSTouch_AutoplayRed(1.0) }];
+    [v appendAttributedString:[[NSAttributedString alloc] initWithString:value
+                                 attributes:@{ NSFontAttributeName: f, NSForegroundColorAttributeName: [UIColor whiteColor] }]];
+    [v appendAttributedString:[[NSAttributedString alloc] initWithString:@"  ›"
+                                 attributes:@{ NSFontAttributeName: fc, NSForegroundColorAttributeName: IOSTouch_AutoplayRed(1.0) }]];
+    aApRowValues[i].attributedText = v;
+  }
+}
+
+// The weapon picker's boxes: ticked (the red edge and tick) or not, each
+// with its picture once the game has given it (the weapon wheel asks for
+// them as the game is played)
+- (void)apRefreshWeapons
+{
+  for (int i = 0; i < 10; i++) {
+    const int n = i + 1;
+    const int bOn = (_ulApPicking >> n) & 1;
+    UIButton *b = aApWeapons[i];
+    b.backgroundColor = bOn ? [UIColor colorWithRed:0.24 green:0.11 blue:0.11 alpha:1.0] : [UIColor colorWithRed:0.10 green:0.11 blue:0.13 alpha:1.0];
+    b.layer.borderColor = bOn ? IOSTouch_AutoplayRed(1.0).CGColor : [UIColor colorWithWhite:1.0 alpha:0.07].CGColor;
+    aApWeaponNames[i].textColor = [UIColor colorWithWhite:1.0 alpha:(bOn ? 0.95 : 0.55)];
+    aApWeaponTicks[i].hidden = !bOn;
+    aApWeaponIcons[i].alpha = bOn ? 1.0 : 0.45;
+    const IOSTouchIcon *pi = &_aIcons[IOSTouch_WheelIconOf(n)];
+    if (pi->bHave && !(ulApIconsShown & (1u << n))) {
+      CGImageRef im = IOSTouch_MakeIconImage(pi->aub[WICON_READY], pi->w, pi->h);
+      if (im) {
+        aApWeaponIcons[i].image = [UIImage imageWithCGImage:im];
+        CGImageRelease(im);
+        ulApIconsShown |= 1u << n;
+      }
+    }
+  }
+}
+
+- (void)apRefreshSeconds
+{
+  apSecondsValue.text = [NSString stringWithFormat:@"%d SEC", _iApCustom];
+}
+
+// The panel as the state says: the part open shown (laid out and filled in
+// as it opens, and again on each change), the others hidden
+- (void)syncAutoplay
+{
+  const int p = _iApPanel;
+  if (apPanel.hidden == (p == APPANEL_MAIN)) apPanel.hidden = (p != APPANEL_MAIN);
+  if (apWeaponsPanel.hidden == (p == APPANEL_WEAPONS)) apWeaponsPanel.hidden = (p != APPANEL_WEAPONS);
+  if (apSecondsPanel.hidden == (p == APPANEL_SECONDS)) apSecondsPanel.hidden = (p != APPANEL_SECONDS);
+  if (p != iApShown) {
+    iApShown = p;
+    uApChangesShown = _uApChanges - 1; // (filled in below)
+    if (p == APPANEL_MAIN || p == APPANEL_WEAPONS || p == APPANEL_SECONDS) {
+      [self placeAutoplay];
+      if (p == APPANEL_SECONDS) apSlider.value = (float)_iApCustom;
+      UIView *v = (p == APPANEL_MAIN) ? apPanel : (p == APPANEL_WEAPONS) ? apWeaponsPanel : apSecondsPanel;
+      [self bringSubviewToFront:v];
+    }
+    [self refreshButtonLooks];
+  }
+  if (p == APPANEL_NONE || p == APPANEL_LEVELS) return;
+  if (_uApChanges != uApChangesShown) {
+    uApChangesShown = _uApChanges;
+    if (p == APPANEL_MAIN) [self apRefreshRows];
+    else if (p == APPANEL_SECONDS) [self apRefreshSeconds];
+  }
+  if (p == APPANEL_WEAPONS) [self apRefreshWeapons]; // (and the pictures, as they come)
+}
+
+- (void)apRowTapped:(UIButton *)sender forEvent:(UIEvent *)event
+{
+  UITouch *t = [[event allTouches] anyObject];
+  const CGFloat x = t ? [t locationInView:sender].x : sender.bounds.size.width;
+  [cheatTick selectionChanged];
+  IOSTouch_AutoplayStep((int)sender.tag, (x < sender.bounds.size.width * 0.5) ? -1 : 1);
+  [self syncAutoplay];
+  [self syncLevels]; // (PICK ONE: the list of levels)
+}
+
+- (void)apStartTapped
+{
+  [cheatTick selectionChanged];
+  IOSTouch_AutoplayStart();
+  [self syncAutoplay];
+}
+
+- (void)apCloseTapped
+{
+  IOSTouch_CloseAutoplay();
+  [self syncAutoplay];
+}
+
+- (void)apWeaponTapped:(UIButton *)sender
+{
+  [cheatTick selectionChanged];
+  IOSTouch_AutoplayToggleWeapon((int)sender.tag);
+  [self syncAutoplay];
+}
+
+- (void)apAllTapped
+{
+  [cheatTick selectionChanged];
+  IOSTouch_AutoplayAllWeapons();
+  [self syncAutoplay];
+}
+
+- (void)apWeaponsDoneTapped
+{
+  IOSTouch_AutoplayWeaponsDone(1);
+  [self syncAutoplay];
+}
+
+- (void)apWeaponsCloseTapped
+{
+  IOSTouch_AutoplayWeaponsDone(0);
+  [self syncAutoplay];
+}
+
+- (void)apSliderMoved:(UISlider *)slider
+{
+  const int was = _iApCustom;
+  IOSTouch_AutoplaySetCustom(slider.value);
+  if (_iApCustom != was) {
+    [cheatTick selectionChanged];
+    [self apRefreshSeconds];
+  }
+}
+
+- (void)apSecondsDoneTapped
+{
+  apSlider.value = (float)_iApCustom;
+  IOSTouch_AutoplaySecondsDone(1);
+  [self syncAutoplay];
+}
+
+- (void)apSecondsCloseTapped
+{
+  IOSTouch_AutoplaySecondsDone(0);
+  [self syncAutoplay];
 }
 
 - (void)resetAll

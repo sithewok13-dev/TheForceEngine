@@ -49,6 +49,7 @@
 #include <TFE_Jedi/InfSystem/infTypesInternal.h>
 #include <TFE_Input/inputMapping.h>
 #include <TFE_Game/saveSystem.h>
+#include <TFE_Game/reticle.h>
 #include <SDL.h>
 #include <math.h>
 #include <string.h>
@@ -443,6 +444,8 @@ namespace TFE_DarkForces
 		RSector* sector;	// its middle one's
 		V3 anchor;		// its middle one's feet
 		s32 count;
+		f32 light;		// how well lit where they stand (0..1)
+		f32 rank;		// biggest first; the better lit, where they're near in size
 	};
 
 	static s32 findRoot(std::vector<s32>& parent, s32 i)
@@ -452,7 +455,7 @@ namespace TFE_DarkForces
 	}
 
 	// Enemies close together and in sight of each other make a group;
-	// biggest first
+	// biggest first, the better lit first among those near in size
 	static void makeGroups(std::vector<Group>& groups)
 	{
 		groups.clear();
@@ -481,6 +484,7 @@ namespace TFE_DarkForces
 				rootGroup[r] = s32(groups.size());
 				Group g;
 				g.count = 0;
+				g.light = 0.0f;
 				g.sector = nullptr;
 				g.center = g.anchor = v3(0, 0, 0);
 				groups.push_back(g);
@@ -488,6 +492,7 @@ namespace TFE_DarkForces
 			}
 			const s32 gi = rootGroup[r];
 			groups[gi].count++;
+			groups[gi].light += clampf(fixed16ToFloat(s_foes[i].obj->sector->ambient) / 31.0f, 0.0f, 1.0f);
 			sums[gi] = sums[gi] + s_foes[i].pos;
 		}
 		for (size_t g = 0; g < groups.size(); g++) { groups[g].center = sums[g] * (1.0f / f32(groups[g].count)); }
@@ -504,8 +509,14 @@ namespace TFE_DarkForces
 				groups[gi].anchor = v3(s_foes[i].pos.x, floorOf(s_foes[i].obj->sector), s_foes[i].pos.z);
 			}
 		}
-		for (Group& g : groups) { g.center.y = g.anchor.y; }
-		std::stable_sort(groups.begin(), groups.end(), [](const Group& a, const Group& b) { return a.count > b.count; });
+		for (Group& g : groups)
+		{
+			g.center.y = g.anchor.y;
+			g.light /= f32(g.count);
+			// (a bright group of 4 goes before a pitch dark one of 5)
+			g.rank = f32(g.count) + 2.0f * g.light;
+		}
+		std::stable_sort(groups.begin(), groups.end(), [](const Group& a, const Group& b) { return a.rank > b.rank; });
 	}
 
 	//////////////////////////////////////////////////////////////////
@@ -526,8 +537,10 @@ namespace TFE_DarkForces
 		return true;
 	}
 
-	// Somewhere near the group, a straight walk from it, standing safe, and
-	// seen by as few of them as can be; facing them
+	// Somewhere near the group, a straight walk from it, standing safe,
+	// facing them with a clear view: of several of them (not of a whole
+	// crowd at once), of the middle of the group, and open space in front
+	// (no pillar or wall right before his eyes)
 	static bool findSpot(const Group& g, Spot* out)
 	{
 		f32 bestScore = 1e9f;
@@ -552,23 +565,30 @@ namespace TFE_DarkForces
 					if (!walkFloor(feet, sec, g.anchor.x, g.anchor.z, 10.0f, nullptr, 6.0f)) { why[3]++; continue; }
 					const V3 eye = feet + up(c_eyeHeight);
 					RSector* eyeSec = sectorAt(eye, sec);
-					s32 seenBy = 0;
+					if (!eyeSec) { why[0]++; continue; }
+					s32 inView = 0, seen = 0;
 					f32 nearest = 1e9f;
 					for (const Foe& f : s_foes)
 					{
 						const f32 d = lenXZ(f.pos - feet);
 						if (d > 80.0f) { continue; }
 						nearest = minf(nearest, d);
-						if (eyeSec && sees(eye, eyeSec, f.head)) { seenBy++; }
+						if (!sees(eye, eyeSec, f.head)) { continue; }
+						seen++;
+						if (lenXZ(f.pos - g.center) < 40.0f) { inView++; }
 					}
 					if (nearest < 7.0f) { why[4]++; continue; }
-					const f32 score = f32(seenBy) * 10.0f + fabsf(r - 24.0f) * 0.25f + rand01();
+					const f32 yaw = headingTo(feet, g.center);
+					const bool open = sees(eye, eyeSec, eye + v3(sinf(yaw), 0.0f, cosf(yaw)) * 10.0f);
+					const bool middle = sees(eye, eyeSec, g.center + up(4.0f));
+					const f32 score = -3.0f * f32(min(inView, 4)) + 1.5f * f32(max(0, seen - 6)) + (open ? 0.0f : 8.0f) + (middle ? 0.0f : 4.0f)
+						+ fabsf(r - 22.0f) * 0.2f + rand01();
 					if (score < bestScore)
 					{
 						bestScore = score;
 						out->feet = feet;
 						out->sector = sec;
-						out->yaw = headingTo(feet, g.center);
+						out->yaw = yaw;
 					}
 				}
 			}
@@ -589,6 +609,7 @@ namespace TFE_DarkForces
 	static s32 s_requested = 0;		// the level asked for (1..), as the mission ends
 	static u32 s_world = 0;			// (IOSCheatGame_World) the level being played
 	static bool s_saved = false;		// the game was saved as it started
+	static bool s_reticleHidden = false;	// the crosshair put away (HUD off)
 	static s32 s_agentLevel = 0, s_agentSelected = 0;
 	static std::vector<s32> s_bag;		// SHUFFLE ALL's levels still to come
 	static std::vector<V3> s_visited;	// the areas that have had their scene
@@ -754,6 +775,11 @@ namespace TFE_DarkForces
 		if (s_invincibility == -2) { s_invincibility = 0; }
 		s_flyMode = JFALSE;
 		s_noclip = JFALSE;
+		if (s_reticleHidden)
+		{
+			s_reticleHidden = false;
+			reticle_enable(true);	// (if the settings have it)
+		}
 		if (restore && s_saved)
 		{
 			agent_setNextLevelByIndex(s_agentLevel);
@@ -1106,20 +1132,22 @@ namespace TFE_DarkForces
 		}
 		else
 		{
-			// nothing in sight: hunting the nearest one left about, else back
-			// to where the group was, then a look round
-			V3 goal = s_center;
-			f32 nearest = c_downRange;
+			// no one in sight (for 1.5 s: the target is kept that long): face
+			// the middle of the group, those of it still about, and go to it;
+			// there, and still no one for a while, a look round
+			V3 goal = s_center, sum = v3(0, 0, 0);
+			s32 count = 0;
 			for (const Foe& f : s_foes)
 			{
-				const f32 d = lenXZ(f.pos - feet);
-				if (d < nearest && fabsf(f.pos.y - feet.y) < 12.0f && lenXZ(f.pos - s_center) < c_downRange) { nearest = d; goal = f.pos; }
+				if (lenXZ(f.pos - s_center) < c_downRange && fabsf(f.pos.y - s_center.y) < 40.0f) { sum = sum + f.pos; count++; }
 			}
+			if (count > 0) { goal = sum * (1.0f / f32(count)); }
 			const f32 d = lenXZ(goal - feet);
-			if (d > 8.0f)
+			if (d > 10.0f || now - s_tSeen < 5.0)
 			{
-				yawWanted = headingTo(feet, goal);
-				forward = fabsf(wrapAngle(yawWanted - yaw)) < 0.6f ? 1.0f : 0.25f;
+				yawWanted = (d > 1.0f) ? headingTo(feet, goal) : yaw;
+				pitchWanted = 0.0f;
+				if (d > 10.0f) { forward = fabsf(wrapAngle(yawWanted - yaw)) < 0.6f ? 1.0f : 0.25f; }
 			}
 			else
 			{
@@ -1294,6 +1322,13 @@ namespace TFE_DarkForces
 			return;
 		}
 		keepPlayer(arrived);
+		// (HUD off: no crosshair either; the menus turn it back on as they
+		// close, so it's put away again every frame)
+		if (!s_opt.bHud && reticle_enabled())
+		{
+			reticle_enable(false);
+			s_reticleHidden = true;
+		}
 		if (s_playerDying) { clearControls(); return; }
 
 		if (s_stage == ST_ARRIVE)
@@ -1322,8 +1357,10 @@ namespace TFE_DarkForces
 			}
 			APDBG("check t %.1f left %d seen %d target %p total %d\n", now - s_tScene, left, (int)s_seen.size(), (void*)s_target, (int)s_foes.size());
 			const bool down = s_tDown > 0.0 && now - s_tDown >= 1.2;
-			// (or fallen far below it: a shaft, a lift gone down)
-			const bool lost = (!s_target && now - s_tSeen > 6.0 && lenXZ(feet - s_center) > 100.0f) || feet.y - s_center.y > 24.0f;
+			// (or fallen far below it: a shaft, a lift gone down; or below it
+			// with no one in sight for a while: a trench, a lower room)
+			const bool lost = (!s_target && now - s_tSeen > 6.0 && lenXZ(feet - s_center) > 100.0f) || feet.y - s_center.y > 24.0f
+				|| (feet.y - s_center.y > 8.0f && !s_target && now - s_tSeen > 3.0);
 			if (down || lost || now - s_tScene >= f64(s_opt.iSceneSeconds))
 			{
 				APDBG("scene over: %s (Kyle %.1f %.1f %.1f, scene %.1f %.1f %.1f)\n", down ? "down" : (lost ? "lost" : "time"), feet.x, feet.y, feet.z, s_center.x, s_center.y, s_center.z);

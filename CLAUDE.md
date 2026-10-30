@@ -38,7 +38,10 @@ They own both the original Dark Forces and Nightdive's Dark Forces Remaster
   view, and every shot and blast, is hidden; nobody about gives "No one
   around for a group photo". Action Freeze and the cinematic burst draw the player as
   HUMAN3.3DO coloured as Kyle.
-  AUTOPLAY (MENU's tray) is a self-playing show for screen recordings:
+  AUTOPLAY (MENU's tray: its panel in `IOSTouch.m`, seven remembered rows,
+  a weapon picker with the wheel's pictures, a custom scene length slider,
+  START; LEVELS' PICK ONE reuses the cheat's list of levels) is a
+  self-playing show for screen recordings:
   `TFE_DarkForces/iosAutoplay.cpp`. START saves the game ("Before
   AUTOPLAY", `autoplay.tfe`), loads a level (shuffled, or the one picked)
   straight in at its own difficulty (no briefing, cutscene or agent progress
