@@ -950,7 +950,7 @@ typedef enum {
   ROLE_FREEZE,      // Action Freeze: turns, moves or zooms the camera
   ROLE_FREEZESHOT,  // Action Freeze: on CAMERA (a photo as it lifts there)
   ROLE_FREEZECLOSE, // Action Freeze: on its X (it ends as the touch lifts there)
-  ROLE_AUTOPLAY,    // AUTOPLAY's show: anywhere (it ends as the touch lifts)
+  ROLE_AUTOPLAY,    // AUTOPLAY's show: anywhere (its gestures: a double tap, a long press)
 } IOSTouchRole;
 
 typedef struct {
@@ -983,6 +983,7 @@ typedef struct {
   unsigned int uSeq;    // the order the touches went down in (IOSTouch_WheelPointed: the newest finger)
   // The cheat: CHEAT's hold, or JUMP's or USE's, is over (done, slid, or nothing to do)
   int bCheatDone;
+  int bApNoHold;        // (AUTOPLAY's show) no long press from it: it slid, landed at an edge, or was one already
 } IOSTouchSlot;
 
 static IOSTouchSlot _aSlots[IOSTOUCH_MAX_TOUCHES];
@@ -1044,7 +1045,7 @@ static int _bLevelListOpen = 0, _iLevelPicked = 0;
 // AUTOPLAY's panel (Dark Forces; see IOSTouch_OpenAutoplay): which part of
 // it is open, and whether the list of levels is open for its LEVELS (PICK
 // ONE) rather than the cheat's
-enum { APPANEL_NONE = 0, APPANEL_MAIN, APPANEL_WEAPONS, APPANEL_SECONDS, APPANEL_LEVELS };
+enum { APPANEL_NONE = 0, APPANEL_MAIN, APPANEL_WEAPONS, APPANEL_LEVELS };
 static int _iApPanel = APPANEL_NONE;
 static int _bLevelListForAutoplay = 0;
 // AUTOPLAY's CONTROLS ON, while the show plays (IOSTouch_SetAutoplayDisplay):
@@ -1056,6 +1057,17 @@ static float _fApStickX = 0.0f, _fApStickY = 0.0f;
 static double _fApStickOX = 0.0, _fApStickOY = 0.0;
 static double _fApDotX = 0.0, _fApDotY = 0.0, _fApDragX = 0.0, _fApDragY = 0.0;
 static unsigned int _ulApLit = 0;
+// The show's gestures (IOSTouch_AutoplayTouch...): the last tap that could
+// be a double tap's first (when, by the touches' clock, and where; < 0: none),
+// and the haptics the view still has to give for a double tap and a long press
+static double _tApTap = -1.0, _fApTapX = 0.0, _fApTapY = 0.0;
+static unsigned int _ctApNext = 0, _ctApExit = 0;
+#define IOSTOUCH_AP_TAP 0.30         // a tap: up again within this (s)
+#define IOSTOUCH_AP_DOUBLE 0.35      // a double tap: the second tap down within this of the first's lift (s)
+#define IOSTOUCH_AP_DOUBLE_NEAR 50.0 // ...and this near it (points)
+#define IOSTOUCH_AP_HOLD 0.5         // a long press: held still this long (s)
+#define IOSTOUCH_AP_STILL 12.0       // still: never this far from where it went down (points)
+#define IOSTOUCH_AP_EDGE 16.0        // (a touch landing this near an edge is a system swipe's, not a long press)
 static double _tJumpTapLift = -1.0;
 static int _iCheatCarry = -1;
 static unsigned int _uCarryWorld = 0;
@@ -1894,10 +1906,6 @@ static void IOSTouch_PickLevel(int iLevel)
 //   DIFFICULTY  EASY / MEDIUM / HARD
 //   CROWD       1x / 2x / 3x
 //   ALARM       ON / OFF
-//   TIME        how long the show plays: 10 ... 180 SEC, CUSTOM (a slider
-//               opens: 5 s to 10 min, in 5 s steps; the row then says how
-//               long); then it ends as a tap ends it (only the time it
-//               plays counts, and nothing on screen counts down)
 //   WEAPONS     ALL, or "3 PICKED": a tap opens the picker (the game's own
 //               weapon pictures, tap to tick or untick, ALL, DONE; one at
 //               least stays ticked)
@@ -1906,36 +1914,25 @@ static void IOSTouch_PickLevel(int iLevel)
 //               player's thumbs would work them (display only)
 // and START, and an X. A touch off the panel closes it, as the X does.
 // Everything is remembered (the app's settings), and START starts the show
-// with it (IOSTOUCH_REQ_AUTOPLAY, IOSTouch_GetAutoplayOptions).
+// with it (IOSTOUCH_REQ_AUTOPLAY, IOSTouch_GetAutoplayOptions). The show
+// plays until the player acts: a double tap, a new fight; a long press,
+// the end (IOSTouch_AutoplayTouch).
 enum { APROW_LEVELS = 0, APROW_DIFFICULTY, APROW_CROWD, APROW_ALARM, // (the left column)
-       APROW_TIME, APROW_WEAPONS, APROW_HUD, APROW_CONTROLS,           // (the right one)
+       APROW_WEAPONS, APROW_HUD, APROW_CONTROLS,                       // (the right one)
        APROW_COUNT };
-#define IOSTOUCH_AP_PRESETS 9 // TIME's lengths before CUSTOM
-static const int _aiApPresets[IOSTOUCH_AP_PRESETS] = { 10, 15, 20, 30, 45, 60, 90, 120, 180 };
-#define IOSTOUCH_AP_CUSTOM IOSTOUCH_AP_PRESETS // (TIME's index for CUSTOM)
-#define IOSTOUCH_AP_SECONDS_MIN 5
-#define IOSTOUCH_AP_SECONDS_MAX 600
-#define IOSTOUCH_AP_SECONDS_STEP 5
 #define IOSTOUCH_AP_LEVEL_KEY @"iosTouchAutoplayLevel"
 #define IOSTOUCH_AP_DIFFICULTY_KEY @"iosTouchAutoplayDifficulty"
 #define IOSTOUCH_AP_CROWD_KEY @"iosTouchAutoplayCrowd"
 #define IOSTOUCH_AP_ALARM_KEY @"iosTouchAutoplayAlarm"
-#define IOSTOUCH_AP_SCENE_KEY @"iosTouchAutoplayScene"
-#define IOSTOUCH_AP_CUSTOM_KEY @"iosTouchAutoplayCustomSeconds"
 #define IOSTOUCH_AP_WEAPONS_KEY @"iosTouchAutoplayWeapons"
 #define IOSTOUCH_AP_HUD_KEY @"iosTouchAutoplayHud"
 #define IOSTOUCH_AP_CONTROLS_KEY @"iosTouchAutoplayControls"
 
-// What's set (iShowSeconds follows the TIME index), loaded from the app's
-// settings the first time it's needed (TIME kept as the scene length was,
-// before the show became one scene); TIME's index (a preset, or
-// CUSTOM) and the custom length, and the index before CUSTOM was stepped
-// onto (its slider's X goes back to it); the weapon picker's ticks while
-// it's open (DONE keeps them); a count that goes up with every change (the
-// view shows the panel again when it moves)
+// What's set, loaded from the app's settings the first time it's needed;
+// the weapon picker's ticks while it's open (DONE keeps them); a count that
+// goes up with every change (the view shows the panel again when it moves)
 static IOSAutoplayOptions _ap;
 static int _bApLoaded = 0;
-static int _iApTime = 2, _iApTimeBefore = 2, _iApCustom = 75;
 static unsigned int _ulApPicking = IOSAUTOPLAY_WEAPONS_ALL;
 static unsigned int _uApChanges = 0;
 
@@ -1944,45 +1941,34 @@ static int IOSTouch_ClampInt(long v, int lo, int hi)
   return v < lo ? lo : (v > hi ? hi : (int)v);
 }
 
-static void IOSTouch_AutoplaySeconds(void)
-{
-  _ap.iShowSeconds = (_iApTime >= 0 && _iApTime < IOSTOUCH_AP_PRESETS) ? _aiApPresets[_iApTime] : _iApCustom;
-}
-
 static void IOSTouch_AutoplayLoad(void)
 {
   if (_bApLoaded) return;
   _bApLoaded = 1;
   NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
   // (the defaults: every level shuffled, HARD, twice the crowd, the alarm
-  // on, 20 s, every weapon, no HUD, no controls)
+  // on, every weapon, no HUD, no controls)
   _ap.iLevel = [d objectForKey:IOSTOUCH_AP_LEVEL_KEY] ? IOSTouch_ClampInt([d integerForKey:IOSTOUCH_AP_LEVEL_KEY], 0, 999) : 0;
   _ap.iDifficulty = [d objectForKey:IOSTOUCH_AP_DIFFICULTY_KEY] ? IOSTouch_ClampInt([d integerForKey:IOSTOUCH_AP_DIFFICULTY_KEY], 0, 2) : 2;
   _ap.iCrowd = [d objectForKey:IOSTOUCH_AP_CROWD_KEY] ? IOSTouch_ClampInt([d integerForKey:IOSTOUCH_AP_CROWD_KEY], 1, 3) : 2;
   _ap.bAlarm = [d objectForKey:IOSTOUCH_AP_ALARM_KEY] ? ([d boolForKey:IOSTOUCH_AP_ALARM_KEY] ? 1 : 0) : 1;
-  _iApTime = [d objectForKey:IOSTOUCH_AP_SCENE_KEY] ? IOSTouch_ClampInt([d integerForKey:IOSTOUCH_AP_SCENE_KEY], 0, IOSTOUCH_AP_CUSTOM) : 2;
-  _iApCustom = [d objectForKey:IOSTOUCH_AP_CUSTOM_KEY]
-                 ? IOSTouch_ClampInt([d integerForKey:IOSTOUCH_AP_CUSTOM_KEY], IOSTOUCH_AP_SECONDS_MIN, IOSTOUCH_AP_SECONDS_MAX) : 75;
-  _iApCustom -= _iApCustom % IOSTOUCH_AP_SECONDS_STEP;
   _ap.ulWeapons = [d objectForKey:IOSTOUCH_AP_WEAPONS_KEY]
                     ? ((unsigned int)[d integerForKey:IOSTOUCH_AP_WEAPONS_KEY] & IOSAUTOPLAY_WEAPONS_ALL) : IOSAUTOPLAY_WEAPONS_ALL;
   if (!_ap.ulWeapons) _ap.ulWeapons = IOSAUTOPLAY_WEAPONS_ALL;
   _ap.bHud = [d boolForKey:IOSTOUCH_AP_HUD_KEY] ? 1 : 0;
   _ap.bControls = [d boolForKey:IOSTOUCH_AP_CONTROLS_KEY] ? 1 : 0;
-  _iApTimeBefore = _iApTime;
-  IOSTouch_AutoplaySeconds();
+  // (TIME's old setting, from before the show ran until the player acts, let go)
+  [d removeObjectForKey:@"iosTouchAutoplayScene"];
+  [d removeObjectForKey:@"iosTouchAutoplayCustomSeconds"];
 }
 
 static void IOSTouch_AutoplaySave(void)
 {
-  IOSTouch_AutoplaySeconds();
   NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
   [d setInteger:_ap.iLevel forKey:IOSTOUCH_AP_LEVEL_KEY];
   [d setInteger:_ap.iDifficulty forKey:IOSTOUCH_AP_DIFFICULTY_KEY];
   [d setInteger:_ap.iCrowd forKey:IOSTOUCH_AP_CROWD_KEY];
   [d setBool:(_ap.bAlarm ? YES : NO) forKey:IOSTOUCH_AP_ALARM_KEY];
-  [d setInteger:_iApTime forKey:IOSTOUCH_AP_SCENE_KEY];
-  [d setInteger:_iApCustom forKey:IOSTOUCH_AP_CUSTOM_KEY];
   [d setInteger:(NSInteger)_ap.ulWeapons forKey:IOSTOUCH_AP_WEAPONS_KEY];
   [d setBool:(_ap.bHud ? YES : NO) forKey:IOSTOUCH_AP_HUD_KEY];
   [d setBool:(_ap.bControls ? YES : NO) forKey:IOSTOUCH_AP_CONTROLS_KEY];
@@ -1993,7 +1979,6 @@ void IOSTouch_GetAutoplayOptions(IOSAutoplayOptions *pOptions)
 {
   if (!pOptions) return;
   IOSTouch_AutoplayLoad();
-  IOSTouch_AutoplaySeconds();
   *pOptions = _ap;
   // (a level picked that this game doesn't have: shuffled)
   if (pOptions->iLevel > _hud.ctLevels) pOptions->iLevel = 0;
@@ -2030,6 +2015,56 @@ void IOSTouch_SetAutoplayDisplay(const IOSAutoplayDisplay *pDisplay)
   _ulApLit = pDisplay->ulButtons;
 }
 
+// The show's gestures, on any touch while it plays (the touches reach
+// nothing else: no game input, no buttons, even with CONTROLS ON). A double
+// tap, two quick taps close together, asks for a new fight; a long press,
+// held still IOSTOUCH_AP_HOLD, ends the show as before. A single tap does
+// nothing, a slide does nothing, and a touch iOS takes away (a system
+// gesture) does nothing. Nothing shows for either: only a haptic (the view
+// gives it, as these counts go up).
+static void IOSTouch_AutoplayTouchMoved(IOSTouchSlot *s, double x, double y)
+{
+  if (hypot(x - s->xDown, y - s->yDown) >= IOSTOUCH_AP_STILL) {
+    s->bFired = 1; // (a slide: neither a tap nor a long press)
+    s->bApNoHold = 1;
+  }
+}
+
+static void IOSTouch_AutoplayTouchEnded(IOSTouchSlot *s, double x, double y, int bCancelled, double tTouch)
+{
+  if (bCancelled || s->bFired || _iMode != IOSTOUCH_AUTOPLAY) return;
+  if (tTouch - s->tDownTouch > IOSTOUCH_AP_TAP || hypot(x - s->xDown, y - s->yDown) >= IOSTOUCH_AP_STILL) {
+    _tApTap = -1.0; // (too long, or it moved: not a tap)
+    return;
+  }
+  if (_tApTap >= 0.0 && s->tDownTouch - _tApTap <= IOSTOUCH_AP_DOUBLE
+      && hypot(x - _fApTapX, y - _fApTapY) <= IOSTOUCH_AP_DOUBLE_NEAR) {
+    _tApTap = -1.0;
+    _iRequests |= IOSTOUCH_REQ_AUTOPLAYNEXT;
+    _ctApNext++;
+    return;
+  }
+  _tApTap = tTouch;
+  _fApTapX = x;
+  _fApTapY = y;
+}
+
+// Once a frame: a touch held still long enough is a long press
+static void IOSTouch_TickAutoplayHolds(double now)
+{
+  if (_iMode != IOSTOUCH_AUTOPLAY) return;
+  for (int i = 0; i < IOSTOUCH_MAX_TOUCHES; i++) {
+    IOSTouchSlot *s = &_aSlots[i];
+    if (!s->touch || s->role != ROLE_AUTOPLAY || s->bFired || s->bApNoHold) continue;
+    if (now - s->tDown < IOSTOUCH_AP_HOLD) continue;
+    s->bFired = 1;
+    s->bApNoHold = 1;
+    _tApTap = -1.0;
+    _iRequests |= IOSTOUCH_REQ_AUTOPLAYSTOP;
+    _ctApExit++;
+  }
+}
+
 // Whether it can be shown: a single-player game being played
 static int IOSTouch_AutoplayCanShow(void)
 {
@@ -2050,11 +2085,6 @@ static void IOSTouch_OpenAutoplay(void)
 
 static void IOSTouch_CloseAutoplay(void)
 {
-  // (the custom length's slider left without DONE: TIME as it was)
-  if (_iApPanel == APPANEL_SECONDS) {
-    _iApTime = _iApTimeBefore;
-    IOSTouch_AutoplaySave();
-  }
   if (_bLevelListForAutoplay) {
     _bLevelListForAutoplay = 0;
     _bLevelListOpen = 0;
@@ -2090,11 +2120,6 @@ static void IOSTouch_AutoplayStep(int iRow, int iDir)
     case APROW_DIFFICULTY: _ap.iDifficulty = (_ap.iDifficulty + iDir + 3) % 3; break;
     case APROW_CROWD:      _ap.iCrowd = (_ap.iCrowd - 1 + iDir + 3) % 3 + 1; break;
     case APROW_ALARM:      _ap.bAlarm = !_ap.bAlarm; break;
-    case APROW_TIME:
-      _iApTimeBefore = _iApTime;
-      _iApTime = (_iApTime + iDir + IOSTOUCH_AP_CUSTOM + 1) % (IOSTOUCH_AP_CUSTOM + 1);
-      if (_iApTime == IOSTOUCH_AP_CUSTOM) _iApPanel = APPANEL_SECONDS;
-      break;
     case APROW_WEAPONS:
       _ulApPicking = _ap.ulWeapons;
       _iApPanel = APPANEL_WEAPONS;
@@ -2142,22 +2167,6 @@ static void IOSTouch_AutoplayWeaponsDone(int bKeep)
   IOSTouch_AutoplaySave();
 }
 
-// The custom length's slider: moved (seconds, kept to 5 s steps); DONE
-// (CUSTOM, at that length); its X (TIME as it was)
-static void IOSTouch_AutoplaySetCustom(float fSeconds)
-{
-  const int i = (int)lroundf(fSeconds / IOSTOUCH_AP_SECONDS_STEP) * IOSTOUCH_AP_SECONDS_STEP;
-  _iApCustom = IOSTouch_ClampInt(i, IOSTOUCH_AP_SECONDS_MIN, IOSTOUCH_AP_SECONDS_MAX);
-}
-
-static void IOSTouch_AutoplaySecondsDone(int bKeep)
-{
-  if (_iApPanel != APPANEL_SECONDS) return;
-  _iApTime = bKeep ? IOSTOUCH_AP_CUSTOM : _iApTimeBefore;
-  _iApPanel = APPANEL_MAIN;
-  IOSTouch_AutoplaySave();
-}
-
 // Once a frame: the panel closes once the game isn't being played
 static void IOSTouch_TickAutoplay(void)
 {
@@ -2167,7 +2176,7 @@ static void IOSTouch_TickAutoplay(void)
 // A row's label and value, as shown ("LEVELS", "SHUFFLE ALL")
 static void IOSTouch_AutoplayRowText(int iRow, char *strLabel, int ctLabel, char *strValue, int ctValue)
 {
-  static const char *aLabels[APROW_COUNT] = { "LEVELS", "DIFFICULTY", "CROWD", "ALARM", "TIME", "WEAPONS", "HUD", "CONTROLS" };
+  static const char *aLabels[APROW_COUNT] = { "LEVELS", "DIFFICULTY", "CROWD", "ALARM", "WEAPONS", "HUD", "CONTROLS" };
   static const char *aDifficulties[3] = { "EASY", "MEDIUM", "HARD" };
   snprintf(strLabel, ctLabel, "%s", (iRow >= 0 && iRow < APROW_COUNT) ? aLabels[iRow] : "");
   strValue[0] = 0;
@@ -2189,9 +2198,6 @@ static void IOSTouch_AutoplayRowText(int iRow, char *strLabel, int ctLabel, char
     case APROW_DIFFICULTY: snprintf(strValue, ctValue, "%s", aDifficulties[IOSTouch_ClampInt(_ap.iDifficulty, 0, 2)]); break;
     case APROW_CROWD:      snprintf(strValue, ctValue, "%d\xC3\x97", _ap.iCrowd); break; // (a times sign)
     case APROW_ALARM:      snprintf(strValue, ctValue, "%s", _ap.bAlarm ? "ON" : "OFF"); break;
-    case APROW_TIME:
-      snprintf(strValue, ctValue, "%d SEC", (_iApTime < IOSTOUCH_AP_PRESETS) ? _aiApPresets[_iApTime] : _iApCustom);
-      break;
     case APROW_WEAPONS: {
       int n = 0;
       for (int w = 1; w <= 10; w++) n += (_ap.ulWeapons >> w) & 1;
@@ -3192,11 +3198,16 @@ static void IOSTouch_TouchBegan(const void *touch, double x, double y, double W,
   s->uSeq = ++_uTouchSeq;
   s->trayButton = -1;
   s->wheelSlot = -1;
-  // AUTOPLAY's show: no controls; a tap anywhere ends it, as it lifts (so
-  // a touch iOS takes away for a system gesture doesn't)
+  // AUTOPLAY's show: no controls; any touch is one of its gestures (see
+  // IOSTouch_AutoplayTouchEnded), and reaches nothing else
   if (_iMode == IOSTOUCH_AUTOPLAY) {
     s->role = ROLE_AUTOPLAY;
     s->button = -1;
+    s->xDown = x;
+    s->yDown = y;
+    // (one landing at an edge can't be a long press: iOS's swipes start there)
+    const double H = (_fViewH > 0.0) ? _fViewH : 375.0;
+    if (x < IOSTOUCH_AP_EDGE || x > W - IOSTOUCH_AP_EDGE || y < IOSTOUCH_AP_EDGE || y > H - IOSTOUCH_AP_EDGE) s->bApNoHold = 1;
     return;
   }
   // AUTOPLAY's panel open (its weapons, its time): the panel takes
@@ -3306,6 +3317,10 @@ static int IOSTouch_TouchMoved(const void *touch, double x, double y)
 {
   IOSTouchSlot *s = touch ? IOSTouch_FindSlot(touch) : NULL;
   if (!s) return 0;
+  if (s->role == ROLE_AUTOPLAY) {
+    IOSTouch_AutoplayTouchMoved(s, x, y);
+    return 0;
+  }
   int bLooksChanged = 0;
   // NEXT WPN, PREV WPN slid far enough from where they went down: the
   // weapon wheel opens at once, to slide to a slice (from here on this is
@@ -3417,6 +3432,7 @@ static void IOSTouch_TouchPassed(const void *touch, double x, double y)
   if (s && s->role == ROLE_MESSAGES && !IOSTouch_StillOnMessages(s, x, y)) {
     s->bFired = 1;
   }
+  if (s && s->role == ROLE_AUTOPLAY) IOSTouch_AutoplayTouchMoved(s, x, y);
 }
 
 // A finger lifted at (x,y), at tTouch by its own clock. bCancelled: iOS
@@ -3429,7 +3445,7 @@ static void IOSTouch_TouchEnded(const void *touch, double x, double y, int bCanc
   unsigned int ulLifted = 0;
   if (s->touch == _pBurstTouch) IOSTouch_EndBurst(); // (whatever became of the touch since)
   if (s->role == ROLE_AUTOPLAY) {
-    if (!bCancelled && _iMode == IOSTOUCH_AUTOPLAY) _iRequests |= IOSTOUCH_REQ_AUTOPLAYSTOP;
+    IOSTouch_AutoplayTouchEnded(s, x, y, bCancelled, tTouch);
   }
   else if (s->role == ROLE_WHEEL && _bWheelOpen) {
     if (bCancelled) {
@@ -3581,6 +3597,7 @@ static void IOSTouch_TickHolds(double now)
   const double known = _tLastTick;
   _tLastTick = now;
   IOSTouch_TickCheat(now, known);
+  IOSTouch_TickAutoplayHolds(now);
   // NEXT WPN and PREV WPN held still (they haven't slid, or the wheel would
   // be open): known to be held IOSTOUCH_WHEEL_HOLD, the wheel opens to tap a
   // slice; until then the ring fills. The first to get there opens it (which
@@ -3985,6 +4002,7 @@ static void IOSTouch_ResetTouches(int bReading)
   _fStickX = _fStickY = 0.0f;
   _bApShow = 0;
   _ulApLit = 0;
+  _tApTap = -1.0;
   _iRequests = 0;
   _fSaveRing = _fLoadRing = _fMenuRing = _fMessagesRing = 0.0f;
   _tLastTick = 0.0;
@@ -4242,12 +4260,6 @@ typedef struct {
   UILabel *apWeaponsHint;
   UIButton *apAll;
   UIButton *apDone;
-  IOSTouchLevelPanel *apSecondsPanel;
-  UILabel *apSecondsTitle;
-  UILabel *apSecondsValue;
-  UISlider *apSlider;
-  UILabel *apSecondsHint;
-  UIButton *apSecondsDone;
   int iApShown;
   // CONTROLS ON: the right thumb's fingertip; whether the show's controls,
   // and which lit buttons, were last shown
@@ -4263,6 +4275,11 @@ typedef struct {
   float fLookSaved;
   int ctLookResetsFelt;
   UIImpactFeedbackGenerator *lookThump;
+  // AUTOPLAY's gestures: a light tap for a double tap (a new fight), a
+  // success buzz for a long press (the end); the counts already felt
+  UIImpactFeedbackGenerator *apNextTap;
+  UINotificationFeedbackGenerator *apExitBump;
+  unsigned int ctApNextFelt, ctApExitFelt;
   // The tray's OPACITY: its slider's panel (it takes its own touches) and
   // slider, its hold's ring, the strength its label says (in %, -1: not yet
   // set), the times it went back to full already felt (a thump each, LOOK's)
@@ -4426,6 +4443,10 @@ static CAShapeLayer *IOSTouch_MakeHoldRing(CGFloat r)
     lookRing = IOSTouch_MakeHoldRing(_aButtons[BTN_TRAYLOOK].radius);
     [aButtonViews[BTN_TRAYLOOK].layer addSublayer:lookRing];
     lookThump = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleMedium];
+    apNextTap = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight];
+    apExitBump = [[UINotificationFeedbackGenerator alloc] init];
+    ctApNextFelt = _ctApNext;
+    ctApExitFelt = _ctApExit;
     ctLookResetsFelt = _ctLookResets;
     UIImageSymbolConfiguration *cfg = [UIImageSymbolConfiguration configurationWithPointSize:14 weight:UIImageSymbolWeightSemibold];
     UIImage *kb = [UIImage systemImageNamed:@"keyboard" withConfiguration:cfg];
@@ -5813,7 +5834,7 @@ static UILabel *IOSTouch_AutoplayHint(NSString *str, UIView *parent)
     aApRowValues[i] = v;
     [apPanel addSubview:r];
   }
-  apHint = IOSTouch_AutoplayHint(@"tap a row's right side for the next value, its left for the one before · tap the screen to stop the show", apPanel);
+  apHint = IOSTouch_AutoplayHint(@"Double tap: new fight \u00B7 Hold: exit", apPanel);
   apStart = [self apMakeButton:@"START" red:YES action:@selector(apStartTapped) inside:apPanel];
 
   // the weapon picker: the game's own pictures (the weapon wheel's)
@@ -5856,24 +5877,6 @@ static UILabel *IOSTouch_AutoplayHint(NSString *str, UIView *parent)
   apAll = [self apMakeButton:@"ALL" red:NO action:@selector(apAllTapped) inside:apWeaponsPanel];
   apDone = [self apMakeButton:@"DONE" red:YES action:@selector(apWeaponsDoneTapped) inside:apWeaponsPanel];
 
-  // the custom length's slider
-  apSecondsPanel = [self apMakePanel:@"TIME" titleLabel:&apSecondsTitle close:@selector(apSecondsCloseTapped)];
-  apSecondsValue = [[UILabel alloc] initWithFrame:CGRectZero];
-  apSecondsValue.font = IOSTouch_AutoplayFont(24, UIFontWeightSemibold);
-  apSecondsValue.textColor = [UIColor whiteColor];
-  apSecondsValue.textAlignment = NSTextAlignmentCenter;
-  [apSecondsPanel addSubview:apSecondsValue];
-  apSlider = [[UISlider alloc] initWithFrame:CGRectZero];
-  apSlider.minimumValue = IOSTOUCH_AP_SECONDS_MIN;
-  apSlider.maximumValue = IOSTOUCH_AP_SECONDS_MAX;
-  apSlider.continuous = YES;
-  apSlider.minimumTrackTintColor = IOSTouch_AutoplayRed(1.0);
-  apSlider.maximumTrackTintColor = [UIColor colorWithWhite:1.0 alpha:0.25];
-  [apSlider addTarget:self action:@selector(apSliderMoved:) forControlEvents:UIControlEventValueChanged];
-  [apSecondsPanel addSubview:apSlider];
-  apSecondsHint = IOSTouch_AutoplayHint(@"5 s to 10 min, in 5 s steps · then the show ends as a tap ends it", apSecondsPanel);
-  apSecondsDone = [self apMakeButton:@"DONE" red:YES action:@selector(apSecondsDoneTapped) inside:apSecondsPanel];
-
   iApShown = APPANEL_NONE;
   uApChangesShown = 0;
   ulApIconsShown = 0;
@@ -5914,8 +5917,8 @@ static UILabel *IOSTouch_AutoplayHint(NSString *str, UIView *parent)
     const CGFloat rowH = fmin(44.0, (bottom - top - 3.0 * gap) / 4.0);
     const CGFloat colW = (w - 2.0 * margin - colGap) * 0.5;
     for (int i = 0; i < APROW_COUNT; i++) {
-      const int bRight = i >= APROW_TIME;
-      const int k = bRight ? i - APROW_TIME : i;
+      const int bRight = i >= APROW_WEAPONS;
+      const int k = bRight ? i - APROW_WEAPONS : i;
       const CGRect r = CGRectMake(margin + (bRight ? colW + colGap : 0.0), top + k * (rowH + gap), colW, rowH);
       aApRows[i].frame = r;
       aApRowLabels[i].frame = CGRectMake(12, 0, r.size.width * 0.36, rowH);
@@ -5948,26 +5951,21 @@ static UILabel *IOSTouch_AutoplayHint(NSString *str, UIView *parent)
     apDone.frame = CGRectMake(w * 0.5 + 12.0, h - 12.0 - btnH, bw, btnH);
     apAll.layer.cornerRadius = apDone.layer.cornerRadius = btnH * 0.5;
   }
-  // the custom length's slider
-  {
-    apSecondsPanel.frame = [self apFrameWide:420.0 high:230.0];
-    const CGFloat w = apSecondsPanel.bounds.size.width, h = apSecondsPanel.bounds.size.height;
-    [self apPlaceTitle:apSecondsTitle inPanel:apSecondsPanel];
-    const CGFloat btnH = 40.0, margin = 24.0;
-    const CGFloat midY = 48.0 + (h - 48.0 - 12.0 - btnH - 18.0) * 0.5;
-    apSecondsValue.frame = CGRectMake(margin, midY - 38.0, w - 2.0 * margin, 30.0);
-    apSlider.frame = CGRectMake(margin, midY - 4.0, w - 2.0 * margin, 30.0);
-    apSecondsHint.frame = CGRectMake(margin, midY + 28.0, w - 2.0 * margin, 14.0);
-    const CGFloat bw = fmin(160.0, w * 0.45);
-    apSecondsDone.frame = CGRectMake((w - bw) * 0.5, h - 12.0 - btnH, bw, btnH);
-    apSecondsDone.layer.cornerRadius = btnH * 0.5;
-  }
 }
 
 // CONTROLS ON, every frame: the thumbs (the stick, the fingertip), and the
 // buttons lit as the autopilot uses them
 - (void)refreshAutoplayThumbs
 {
+  // (the show's gestures felt: nothing shows for them)
+  if (ctApNextFelt != _ctApNext) {
+    ctApNextFelt = _ctApNext;
+    [apNextTap impactOccurred];
+  }
+  if (ctApExitFelt != _ctApExit) {
+    ctApExitFelt = _ctApExit;
+    [apExitBump notificationOccurred:UINotificationFeedbackTypeSuccess];
+  }
   const int bShow = _bApShow && _iMode == IOSTOUCH_AUTOPLAY;
   if (bShow != bApShowShown || (bShow && _ulApLit != ulApLitShown)) {
     bApShowShown = bShow;
@@ -6040,11 +6038,6 @@ static UILabel *IOSTouch_AutoplayHint(NSString *str, UIView *parent)
   }
 }
 
-- (void)apRefreshSeconds
-{
-  apSecondsValue.text = [NSString stringWithFormat:@"%d SEC", _iApCustom];
-}
-
 // The panel as the state says: the part open shown (laid out and filled in
 // as it opens, and again on each change), the others hidden
 - (void)syncAutoplay
@@ -6052,14 +6045,12 @@ static UILabel *IOSTouch_AutoplayHint(NSString *str, UIView *parent)
   const int p = _iApPanel;
   if (apPanel.hidden == (p == APPANEL_MAIN)) apPanel.hidden = (p != APPANEL_MAIN);
   if (apWeaponsPanel.hidden == (p == APPANEL_WEAPONS)) apWeaponsPanel.hidden = (p != APPANEL_WEAPONS);
-  if (apSecondsPanel.hidden == (p == APPANEL_SECONDS)) apSecondsPanel.hidden = (p != APPANEL_SECONDS);
   if (p != iApShown) {
     iApShown = p;
     uApChangesShown = _uApChanges - 1; // (filled in below)
-    if (p == APPANEL_MAIN || p == APPANEL_WEAPONS || p == APPANEL_SECONDS) {
+    if (p == APPANEL_MAIN || p == APPANEL_WEAPONS) {
       [self placeAutoplay];
-      if (p == APPANEL_SECONDS) apSlider.value = (float)_iApCustom;
-      UIView *v = (p == APPANEL_MAIN) ? apPanel : (p == APPANEL_WEAPONS) ? apWeaponsPanel : apSecondsPanel;
+      UIView *v = (p == APPANEL_MAIN) ? apPanel : apWeaponsPanel;
       [self bringSubviewToFront:v];
     }
     [self refreshButtonLooks];
@@ -6068,7 +6059,6 @@ static UILabel *IOSTouch_AutoplayHint(NSString *str, UIView *parent)
   if (_uApChanges != uApChangesShown) {
     uApChangesShown = _uApChanges;
     if (p == APPANEL_MAIN) [self apRefreshRows];
-    else if (p == APPANEL_SECONDS) [self apRefreshSeconds];
   }
   if (p == APPANEL_WEAPONS) [self apRefreshWeapons]; // (and the pictures, as they come)
 }
@@ -6119,29 +6109,6 @@ static UILabel *IOSTouch_AutoplayHint(NSString *str, UIView *parent)
 - (void)apWeaponsCloseTapped
 {
   IOSTouch_AutoplayWeaponsDone(0);
-  [self syncAutoplay];
-}
-
-- (void)apSliderMoved:(UISlider *)slider
-{
-  const int was = _iApCustom;
-  IOSTouch_AutoplaySetCustom(slider.value);
-  if (_iApCustom != was) {
-    [cheatTick selectionChanged];
-    [self apRefreshSeconds];
-  }
-}
-
-- (void)apSecondsDoneTapped
-{
-  apSlider.value = (float)_iApCustom;
-  IOSTouch_AutoplaySecondsDone(1);
-  [self syncAutoplay];
-}
-
-- (void)apSecondsCloseTapped
-{
-  IOSTouch_AutoplaySecondsDone(0);
   [self syncAutoplay];
 }
 

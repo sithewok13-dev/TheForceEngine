@@ -1,8 +1,7 @@
 #ifdef TFE_IOS
 //////////////////////////////////////////////////////////////////////
 // iOS: AUTOPLAY (MENU's tray), a self-playing show of Dark Forces for
-// screen recordings: one fight, Kyle on autopilot, for as long as TIME
-// says.
+// screen recordings: a fight, Kyle on autopilot, until the player acts.
 //
 // START saves the game as it is ("Before AUTOPLAY"), then loads a level
 // (the one picked, or one of them shuffled) at AUTOPLAY's difficulty,
@@ -17,9 +16,10 @@
 // its kinds come in from out of his sight and come at him (within the
 // caps); with nothing to copy, he goes after the nearest left in the
 // level. If he gets lost (a trench, a shaft, wandered off, stuck) he is
-// put back near the group. God mode and full ammo throughout. When TIME
-// is up (counting only while it plays), or at a tap anywhere, it ends and
-// loads the save back: the game as it was.
+// put back near the group. God mode and full ammo throughout. It plays
+// until the player acts: a double tap is a new fight (another level, for
+// SHUFFLE ALL; another group in this one, for PICK ONE), a long press ends
+// it and loads the save back: the game as it was.
 //
 // The autopilot plays as a person would: its stick, buttons and weapon
 // picks go into the game's input mapping as the touch controls' do, and
@@ -623,7 +623,7 @@ namespace TFE_DarkForces
 	static V3 s_farPos;
 	static f64 s_tPrev = 0.0;
 	static f64 s_tStart = 0.0;		// (the rig's log: when the show started)
-	static f64 s_played = 0.0;		// how long the show has played (not loading levels, not in the background)
+	static bool s_wantNext = false;		// a double tap: a new fight, as the game next runs
 
 	// The scene
 	static V3 s_center;
@@ -704,8 +704,19 @@ namespace TFE_DarkForces
 			for (s32 i = 1; i <= count; i++) { if (i != cur || count == 1) { s_bag.push_back(i); } }
 			for (s32 i = s32(s_bag.size()) - 1; i > 0; i--) { std::swap(s_bag[i], s_bag[randInt(i + 1)]); }
 		}
-		const s32 level = s_bag.back();
+		s32 level = s_bag.back();
 		s_bag.pop_back();
+		// (never the one being played, unless it's the only one)
+		if (level == cur && count > 1)
+		{
+			if (s_bag.empty())
+			{
+				for (s32 i = 1; i <= count; i++) { if (i != cur) { s_bag.push_back(i); } }
+				for (s32 i = s32(s_bag.size()) - 1; i > 0; i--) { std::swap(s_bag[i], s_bag[randInt(i + 1)]); }
+			}
+			level = s_bag.back();
+			s_bag.pop_back();
+		}
 		return level;
 	}
 
@@ -722,6 +733,13 @@ namespace TFE_DarkForces
 	static void nextLevel()
 	{
 		goToLevel(s_opt.iLevel > 0 ? s_opt.iLevel : pickLevel());
+	}
+
+	void iosAutoplay_next()
+	{
+		// (not while a level loads, nor before the fight has begun)
+		if (!s_on || s_stage != ST_SCENE) { return; }
+		s_wantNext = true;
 	}
 
 	s32 iosAutoplay_nextLevel()
@@ -765,7 +783,6 @@ namespace TFE_DarkForces
 		s_opt = *options;
 		s_opt.iDifficulty = max(0, min(2, s_opt.iDifficulty));
 		s_opt.iCrowd = max(1, min(3, s_opt.iCrowd));
-		s_opt.iShowSeconds = max(5, min(3600, s_opt.iShowSeconds));
 		s_opt.ulWeapons &= IOSAUTOPLAY_WEAPONS_ALL;
 		s_opt.bControls = s_opt.bControls ? 1 : 0;
 		if (!s_opt.ulWeapons) { s_opt.ulWeapons = IOSAUTOPLAY_WEAPONS_ALL; }
@@ -783,7 +800,7 @@ namespace TFE_DarkForces
 		s_world = IOSCheatGame_World();
 		s_tPrev = SDL_GetTicks() / 1000.0;
 		s_tStart = s_tPrev;
-		s_played = 0.0;
+		s_wantNext = false;
 		// (nothing on screen: the show is for clean recordings; the panel
 		// says a tap stops it)
 		nextLevel();
@@ -1002,7 +1019,7 @@ namespace TFE_DarkForces
 	// The show's one scene: one of the level's best groups (by size and
 	// light), picked at random among the top few so each show differs; Kyle
 	// placed near it, its crowd, its alarm
-	static void startScene(f64 now)
+	static void startScene(f64 now, bool another = false)
 	{
 		collectFoes();
 		if (s_foes.empty()) { nextLevel(); return; }
@@ -1025,6 +1042,19 @@ namespace TFE_DarkForces
 			top.erase(top.begin() + k);
 		}
 		for (s32 i = 4; i < s32(groups.size()); i++) { order.push_back(i); }
+		// (another fight in this level: the groups where this one is go last,
+		// only if there's nothing else)
+		if (another)
+		{
+			std::vector<s32> here;
+			for (size_t k = 0; k < order.size();)
+			{
+				const Group& g = groups[order[k]];
+				if (lenXZ(g.center - s_center) < 60.0f && fabsf(g.center.y - s_center.y) < 24.0f) { here.push_back(order[k]); order.erase(order.begin() + k); }
+				else { k++; }
+			}
+			order.insert(order.end(), here.begin(), here.end());
+		}
 	#ifdef IOS_AUTOPLAY_RIG_DEBUG
 		if (getenv("APTEST_RANK")) { order.insert(order.begin(), atoi(getenv("APTEST_RANK"))); }
 	#endif
@@ -1556,16 +1586,6 @@ namespace TFE_DarkForces
 			if (now - s_tStage > 30.0) { iosAutoplay_stop(false); }
 			return;
 		}
-		// TIME: the show's time up, it ends as a tap ends it (the time
-		// counted only while it plays: dt is at most a tenth of a second,
-		// and this runs only while a level is being played)
-		s_played += dt;
-		if (s_played >= f64(s_opt.iShowSeconds))
-		{
-			APDBG("TIME up at %.1f s played (%.1f s since the start)\n", s_played, now - s_tStart);
-			iosAutoplay_stop(true);
-			return;
-		}
 		keepPlayer(arrived);
 		// (HUD off: no crosshair either; the menus turn it back on as they
 		// close, so it's put away again every frame)
@@ -1582,6 +1602,17 @@ namespace TFE_DarkForces
 			return;
 		}
 		if (s_stage != ST_SCENE) { return; }
+
+		// a double tap: another level (SHUFFLE ALL: never this one), or
+		// another fight in this one (PICK ONE)
+		if (s_wantNext)
+		{
+			s_wantNext = false;
+			APDBG("NEXT at %.1f s\n", now - s_tStart);
+			if (s_opt.iLevel > 0) { startScene(now, true); }
+			else { nextLevel(); }
+			return;
+		}
 
 		autopilot(now, dt);
 	#ifdef IOS_AUTOPLAY_RIG_DEBUG

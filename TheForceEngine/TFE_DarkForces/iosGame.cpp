@@ -82,12 +82,17 @@ namespace TFE_DarkForces
 	// nothing in its menus (they take taps as mouse clicks)
 	static s32 overlayMode(bool inMission)
 	{
+		// (AUTOPLAY: no controls, its gestures; through its level loads too, so
+		// no touch then reaches the game as a click)
+		if (iosAutoplay_on() && inMission && !escapeMenu_isOpen() && !pda_isOpen() && !TFE_FrontEndUI::isConfigMenuOpen())
+		{
+			return IOSTOUCH_AUTOPLAY;
+		}
 		if (!inMission || !playerThere() || escapeMenu_isOpen() || pda_isOpen() || cutscene_isPlaying() ||
 			TFE_FrontEndUI::isConsoleOpen() || TFE_FrontEndUI::isConfigMenuOpen())
 		{
 			return IOSTOUCH_HIDDEN;
 		}
-		if (iosAutoplay_on()) { return IOSTOUCH_AUTOPLAY; }	// (no controls; a tap ends it)
 		if (s_typing) { return IOSTOUCH_CONSOLE; }
 		if (s_gamePaused && !s_holding) { return IOSTOUCH_PAUSED; }
 		return IOSTOUCH_GAMEPLAY;
@@ -434,11 +439,16 @@ namespace TFE_DarkForces
 
 		setHold(mode == IOSTOUCH_GAMEPLAY && IOSTouch_HoldsGame());
 
-		// AUTOPLAY: started from MENU's tray, ended by a tap anywhere (back to
-		// the game as it was); meanwhile it plays, and the touches don't
+		// AUTOPLAY: started from MENU's tray; a double tap, a new fight; a long
+		// press ends it (back to the game as it was); meanwhile it plays, and
+		// the touches don't
 		if (requests & IOSTOUCH_REQ_AUTOPLAYSTOP)
 		{
 			iosAutoplay_stop(true);
+		}
+		else if (requests & IOSTOUCH_REQ_AUTOPLAYNEXT)
+		{
+			iosAutoplay_next();
 		}
 		else if ((requests & IOSTOUCH_REQ_AUTOPLAY) && mode == IOSTOUCH_GAMEPLAY && !iosAutoplay_on())
 		{

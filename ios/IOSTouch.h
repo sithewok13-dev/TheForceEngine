@@ -98,11 +98,12 @@
        FPS (shows or hides a frame rate readout by QUICK SAVE), AUTOPLAY
        (Dark Forces: opens the self-playing show's panel over the game,
        which holds still meanwhile: LEVELS, DIFFICULTY, CROWD, ALARM,
-       TIME, WEAPONS, HUD and CONTROLS, each a tap on its right half for
-       the next value and its left half for the one before, remembered;
-       START starts it; while it plays nothing shows, or with CONTROLS ON
-       the controls as a player's thumbs would work them (display only),
-       and a tap anywhere ends it, IOSTOUCH_AUTOPLAY), CAMERA
+       WEAPONS, HUD and CONTROLS, each a tap on its right half for the
+       next value and its left half for the one before, remembered; START
+       starts it; while it plays nothing shows, or with CONTROLS ON the
+       controls as a player's thumbs would work them (display only); a
+       double tap anywhere is a new fight, a long press ends it,
+       IOSTOUCH_AUTOPLAY), CAMERA
        (shows or hides CAMERA; held, its options open in a row under the
        tray), CHEAT (the sithewok cheat's switch), LEVEL (only while the
        cheat is on, single player: opens the list of the game's levels, in
@@ -165,7 +166,7 @@ enum {
   IOSTOUCH_GAMEPLAY,   /* a single-player game is being played */
   IOSTOUCH_CONSOLE,    /* the console is open over the game: only MENU (and its tray) */
   IOSTOUCH_PAUSED,     /* the game is paused: RESUME and MENU */
-  IOSTOUCH_AUTOPLAY,   /* Dark Forces: AUTOPLAY's show: nothing shows; a tap anywhere ends it */
+  IOSTOUCH_AUTOPLAY,   /* Dark Forces: AUTOPLAY's show: nothing shows (or CONTROLS' display); a double tap anywhere is a new fight, a long press ends it */
 };
 
 /* What the HUD shows, so the buttons keep clear of it and the context
@@ -206,7 +207,8 @@ enum {
   IOSTOUCH_REQ_MAP       = 1 << 8, /* Dark Forces: the automap on or off (MAP) */
   IOSTOUCH_REQ_HD        = 1 << 9, /* Dark Forces: the HD graphics on or off (MENU's tray: HD) */
   IOSTOUCH_REQ_AUTOPLAY  = 1 << 10, /* Dark Forces: start AUTOPLAY, as IOSTouch_GetAutoplayOptions says */
-  IOSTOUCH_REQ_AUTOPLAYSTOP = 1 << 11, /* Dark Forces: AUTOPLAY tapped: back to the game */
+  IOSTOUCH_REQ_AUTOPLAYSTOP = 1 << 11, /* Dark Forces: AUTOPLAY held (a long press): back to the game */
+  IOSTOUCH_REQ_AUTOPLAYNEXT = 1 << 12, /* Dark Forces: AUTOPLAY double tapped: a new fight */
 };
 
 /* Buttons as the game reads them once per tick (IOSTouchInput.ulButtons) */
@@ -313,7 +315,6 @@ typedef struct IOSAutoplayOptions {
   int iDifficulty;       /* 0 EASY, 1 MEDIUM, 2 HARD */
   int iCrowd;            /* 1..3: each scene's enemies, and that many times over in copies of their own kinds */
   int bAlarm;            /* each scene starts with everyone around woken and hunting */
-  int iShowSeconds;      /* how long the show plays (counting only while it plays); then it ends as a tap ends it */
   unsigned int ulWeapons; /* bit w: weapon number w ticked (IOSAUTOPLAY_WEAPONS_ALL: ALL) */
   int bHud;              /* the game's HUD shows */
   int bControls;         /* the touch controls show, as if someone were playing (display only) */
@@ -324,7 +325,7 @@ void IOSTouch_GetAutoplayOptions(IOSAutoplayOptions *pOptions);
 /* What the autopilot is doing, for CONTROLS ON: the overlay then shows the
    controls during the show as in play, a left thumb on the move stick, a
    right thumb's fingertip dragging to look, and the buttons it uses lit.
-   Display only: nothing it shows is a touch, and a tap still ends the show. */
+   Display only: nothing it shows is a touch; the show's gestures still work. */
 typedef struct IOSAutoplayDisplay {
   int bOn;                 /* show the controls (CONTROLS ON, the show playing) */
   float fMoveX, fMoveY;    /* the stick: -1..1, right and forward */

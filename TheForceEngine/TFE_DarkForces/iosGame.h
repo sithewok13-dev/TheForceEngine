@@ -54,6 +54,9 @@ namespace TFE_DarkForces
 	// it made then)
 	void iosAutoplay_stop(bool restore);
 	bool iosAutoplay_on();
+	// (a double tap) a new fight: another level (SHUFFLE ALL), or another
+	// group in this one (PICK ONE); nothing while a level loads
+	void iosAutoplay_next();
 	// The game's key for a weapon (WeaponID): keys 1 to 0 in the game's
 	// order, which has the mines (7) before the mortar (8), as the WeaponIDs
 	// don't
