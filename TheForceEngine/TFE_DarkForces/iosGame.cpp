@@ -87,6 +87,7 @@ namespace TFE_DarkForces
 		{
 			return IOSTOUCH_HIDDEN;
 		}
+		if (iosAutoplay_on()) { return IOSTOUCH_AUTOPLAY; }	// (no controls; a tap ends it)
 		if (s_typing) { return IOSTOUCH_CONSOLE; }
 		if (s_gamePaused && !s_holding) { return IOSTOUCH_PAUSED; }
 		return IOSTOUCH_GAMEPLAY;
@@ -371,6 +372,8 @@ namespace TFE_DarkForces
 
 	void iosGame_frame(bool inMission, u32 framesDrawn)
 	{
+		// (AUTOPLAY ends quietly if the game leaves the mission: the menus)
+		if (iosAutoplay_on() && !inMission) { iosAutoplay_stop(false); }
 		const s32 mode = overlayMode(inMission);
 		if (mode == IOSTOUCH_HIDDEN && s_typing) { setTyping(false); }
 
@@ -426,6 +429,27 @@ namespace TFE_DarkForces
 		}
 
 		setHold(mode == IOSTOUCH_GAMEPLAY && IOSTouch_HoldsGame());
+
+		// AUTOPLAY: started from MENU's tray, ended by a tap anywhere (back to
+		// the game as it was); meanwhile it plays, and the touches don't
+		if (requests & IOSTOUCH_REQ_AUTOPLAYSTOP)
+		{
+			iosAutoplay_stop(true);
+		}
+		else if ((requests & IOSTOUCH_REQ_AUTOPLAY) && mode == IOSTOUCH_GAMEPLAY && !iosAutoplay_on())
+		{
+			IOSAutoplayOptions options;
+			IOSTouch_GetAutoplayOptions(&options);
+			iosAutoplay_start(&options);
+		}
+		if (mode == IOSTOUCH_AUTOPLAY)
+		{
+			s_heldPrev = 0;
+			// (paused meanwhile: it plays on)
+			if (s_gamePaused && !s_holding) { inputMapping_setStatePress(IADF_PAUSE); }
+			iosAutoplay_input();
+			return;
+		}
 
 		if (mode == IOSTOUCH_HIDDEN)
 		{
@@ -486,6 +510,12 @@ namespace TFE_DarkForces
 		f32 lx = 0.0f, ly = 0.0f, yaw = 0.0f, pitch = 0.0f;
 		IOSTouch_TakeLook(&lx, &ly);
 		IOSTouch_TakeGyro(&yaw, &pitch);
+		if (iosAutoplay_on())
+		{
+			// (AUTOPLAY turns the view; the touches' look is dropped)
+			lx = ly = yaw = pitch = 0.0f;
+			iosAutoplay_takeLook(&lx, &ly);
+		}
 		// tilt aiming turns the view as far as the phone turns (degrees, + left
 		// and + up), whatever the mouse sensitivity
 		const f32 sensH = fabsf(inputMapping_getHorzMouseSensitivity());

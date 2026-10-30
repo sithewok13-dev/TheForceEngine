@@ -229,6 +229,7 @@ enum {
   KIND_LOOKSPEED,// (MENU's tray) the next look speed, when the touch lifts on it; held IOSTOUCH_MENU_HOLD, back to 1x
   KIND_HD,       // (MENU's tray, Dark Forces) the Remaster's HD graphics on or off, when the touch lifts on it
   KIND_OPACITY,  // (MENU's tray) opens or closes its slider, when the touch lifts on it; held IOSTOUCH_MENU_HOLD, back to full
+  KIND_AUTOPLAY, // (MENU's tray, Dark Forces) starts AUTOPLAY, when the touch lifts on it
 };
 
 // which modes a button shows in
@@ -262,8 +263,9 @@ typedef struct {
 // strength, on a slider under the tray; held, back to full), CAMERA (the camera
 // symbol: shows or hides CAMERA; held, its options open in a row under the
 // tray: PHOTO, SELFIES, FREEZE, and PHOTO's ticks in one more under PHOTO),
-// CHEAT (the cheat's switch), LEVEL (the list of levels, only while the cheat
-// is on) and the keyboard, for the console (cheats). RESUME, in the middle, only
+// AUTOPLAY (Dark Forces' self-playing show), CHEAT (the cheat's switch),
+// LEVEL (the list of levels, only while the cheat is on) and the keyboard,
+// for the console (cheats). RESUME, in the middle, only
 // while the game is paused.
 enum {
   BTN_FIRE, BTN_ZOOM, BTN_CROUCH, BTN_USE, BTN_JUMP, BTN_BOMB,
@@ -272,7 +274,7 @@ enum {
   BTN_CAMERA,
   BTN_CHEAT,
   BTN_RESUME,
-  BTN_TRAYLOOK, BTN_TRAYSENS, BTN_TRAYGYRO, BTN_TRAYOPACITY, BTN_TRAYFPS, BTN_TRAYHD, BTN_TRAYCAM, BTN_TRAYCHEAT, BTN_TRAYLEVEL, BTN_TRAYKEYS, // MENU's tray (left to right), hidden unless it is open
+  BTN_TRAYLOOK, BTN_TRAYSENS, BTN_TRAYGYRO, BTN_TRAYOPACITY, BTN_TRAYFPS, BTN_TRAYHD, BTN_TRAYAUTO, BTN_TRAYCAM, BTN_TRAYCHEAT, BTN_TRAYLEVEL, BTN_TRAYKEYS, // MENU's tray (left to right), hidden unless it is open
   BTN_CAMROW_PHOTO, BTN_CAMROW_SELFIES, BTN_CAMROW_FREEZE,           // CAMERA's options (left to right)
   BTN_CAMOPT_CLEAN, BTN_CAMOPT_HUD, BTN_CAMOPT_BTNS,                 // PHOTO's ticks (left to right)
   BTN_COUNT
@@ -299,6 +301,7 @@ static IOSTouchButton _aButtons[] = {
   [BTN_TRAYOPACITY] = { "OPACITY",   KIND_OPACITY,  0,                      20.0, 0, SHOW_ALL },
   [BTN_TRAYFPS]   = { "FPS",         KIND_FPS,      0,                      20.0, 0, SHOW_ALL },
   [BTN_TRAYHD]    = { "HD",          KIND_HD,       IOSTOUCH_REQ_HD,        20.0, 0, SHOW_PLAY },
+  [BTN_TRAYAUTO]  = { "AUTO\nPLAY",  KIND_AUTOPLAY, IOSTOUCH_REQ_AUTOPLAY,  20.0, 0, SHOW_PLAY },
   [BTN_TRAYCAM]   = { "",            KIND_CAMSWITCH, 0,                     20.0, 0, SHOW_ALL },
   [BTN_TRAYCHEAT] = { "CHEAT",       KIND_CHEATSWITCH, 0,                   20.0, 0, SHOW_ALL },
   [BTN_TRAYLEVEL] = { "LEVEL",       KIND_LEVELPICK, 0,                     20.0, 0, SHOW_PLAY },
@@ -505,8 +508,8 @@ static void IOSTouch_WheelGeometry(double W, double H, double inLeft, double inT
 }
 
 // MENU's tray along its row (IOSTouch_LayoutButtons found where): the
-// keyboard under MENU, then LEVEL (if it shows: bLevel), CHEAT, CAMERA, HD,
-// FPS, OPACITY, GYRO, SENS and LOOK to the left, IOSTOUCH_TRAY_STEP apart; and
+// keyboard under MENU, then LEVEL (if it shows: bLevel), CHEAT, CAMERA,
+// AUTOPLAY, HD, FPS, OPACITY, GYRO, SENS and LOOK to the left, IOSTOUCH_TRAY_STEP apart; and
 // CAMERA's options under the tray's CAMERA, and PHOTO's ticks in one more
 // under PHOTO, and OPACITY's slider under OPACITY, each slid along to stay on
 // the screen. LEVEL hidden sits under CHEAT (nothing
@@ -932,6 +935,7 @@ typedef enum {
   ROLE_FREEZE,      // Action Freeze: turns, moves or zooms the camera
   ROLE_FREEZESHOT,  // Action Freeze: on CAMERA (a photo as it lifts there)
   ROLE_FREEZECLOSE, // Action Freeze: on its X (it ends as the touch lifts there)
+  ROLE_AUTOPLAY,    // AUTOPLAY's show: anywhere (it ends as the touch lifts)
 } IOSTouchRole;
 
 typedef struct {
@@ -1326,6 +1330,22 @@ void IOSTouch_ShowMessage(const char *str, double fSeconds)
   _fCamMessageTime = fSeconds;
 }
 
+// AUTOPLAY's options (Dark Forces). For now always its defaults: every
+// level shuffled, HARD, twice the crowd, the alarm on, 20 s scenes, every
+// weapon, no HUD.
+void IOSTouch_GetAutoplayOptions(IOSAutoplayOptions *pOptions)
+{
+  if (!pOptions) return;
+  memset(pOptions, 0, sizeof(*pOptions));
+  pOptions->iLevel = 0;
+  pOptions->iDifficulty = 2;
+  pOptions->iCrowd = 2;
+  pOptions->bAlarm = 1;
+  pOptions->iSceneSeconds = 20;
+  pOptions->ulWeapons = IOSAUTOPLAY_WEAPONS_ALL;
+  pOptions->bHud = 0;
+}
+
 // Lets go of every touch but s (it carries on as it is): they are ignored
 // until they lift. MENU's tray closes; the stick stops.
 static void IOSTouch_DropTouches(const IOSTouchSlot *s)
@@ -1602,6 +1622,9 @@ static void IOSTouch_UseTrayButton(int button)
   }
   else if (kind == KIND_HD) {
     _iRequests |= _aButtons[button].ulAction; // (the game switches, and says so)
+  }
+  else if (kind == KIND_AUTOPLAY) {
+    _iRequests |= _aButtons[button].ulAction; // (the game starts it, IOSTouch_GetAutoplayOptions)
   }
   else if (kind == KIND_FPS) {
     IOSTouch_SetShowFps(!_bShowFps);
@@ -2818,6 +2841,13 @@ static void IOSTouch_TouchBegan(const void *touch, double x, double y, double W,
   s->uSeq = ++_uTouchSeq;
   s->trayButton = -1;
   s->wheelSlot = -1;
+  // AUTOPLAY's show: no controls; a tap anywhere ends it, as it lifts (so
+  // a touch iOS takes away for a system gesture doesn't)
+  if (_iMode == IOSTOUCH_AUTOPLAY) {
+    s->role = ROLE_AUTOPLAY;
+    s->button = -1;
+    return;
+  }
   // The cheat's list of levels open: the list itself takes the touches on it
   // (the view's level panel); one anywhere else closes it, and does nothing
   // more until it lifts
@@ -3039,7 +3069,10 @@ static void IOSTouch_TouchEnded(const void *touch, double x, double y, int bCanc
   if (!s) return;
   unsigned int ulLifted = 0;
   if (s->touch == _pBurstTouch) IOSTouch_EndBurst(); // (whatever became of the touch since)
-  if (s->role == ROLE_WHEEL && _bWheelOpen) {
+  if (s->role == ROLE_AUTOPLAY) {
+    if (!bCancelled && _iMode == IOSTOUCH_AUTOPLAY) _iRequests |= IOSTOUCH_REQ_AUTOPLAYSTOP;
+  }
+  else if (s->role == ROLE_WHEEL && _bWheelOpen) {
     if (bCancelled) {
       // the opener taken away: the wheel stays open, to tap
       if (s->bWheelOpener) _bWheelTapMode = 1;
@@ -4587,7 +4620,8 @@ static void IOSTouch_CheatEmblemPaths(CGFloat cx, CGFloat cy, CGFloat r, UIBezie
 
   // The FPS readout (not while the open tray lies over it), and the app's
   // settings when it, or tilt aiming's mode or sensitivity, was changed
-  const int bFpsShown = _bShowFps && !(_bTrayOpen && IOSTouch_FpsUnderTray()) && _iCamStage == CAM_NONE;
+  const int bFpsShown = _bShowFps && !(_bTrayOpen && IOSTouch_FpsUnderTray()) && _iCamStage == CAM_NONE
+                        && _iMode != IOSTOUCH_AUTOPLAY; // (AUTOPLAY's show: nothing over it)
   if (fpsLabel.hidden == bFpsShown) fpsLabel.hidden = !bFpsShown;
   if (bFpsSaved != _bShowFps) {
     bFpsSaved = _bShowFps;

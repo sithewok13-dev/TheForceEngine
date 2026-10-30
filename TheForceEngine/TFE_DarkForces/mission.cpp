@@ -429,7 +429,12 @@ namespace TFE_DarkForces
 				{
 					const char* levelName = agent_getLevelName();
 					// For now always load medium difficulty since it cannot be selected.
+				#ifdef TFE_IOS
+					// (iOS: AUTOPLAY's own difficulty, while it plays)
+					if (level_load(levelName, iosAutoplay_levelDifficulty(s_agentData[s_agentId].difficulty)))
+				#else
 					if (level_load(levelName, s_agentData[s_agentId].difficulty))
+				#endif
 					{
 						setScreenBrightness(ONE_16);
 						setScreenFxLevels(0, 0, 0);
@@ -663,8 +668,8 @@ namespace TFE_DarkForces
 			{
 				handleGeneralInput();
 			#ifdef TFE_IOS
-				// (CAMERA's photo view: no map, no HUD)
-				if (!iosCamera_photoView())
+				// (CAMERA's photo view: no map, no HUD; AUTOPLAY's show, unless its HUD is on)
+				if (!iosCamera_photoView() && iosAutoplay_hudShown())
 			#endif
 				{
 					if (s_drawAutomap)
@@ -1433,6 +1438,10 @@ namespace TFE_DarkForces
 				executeCheat(s_queuedCheatID);
 				s_queuedCheatID = CHEAT_NONE;
 			}
+		#ifdef TFE_IOS
+			// iOS: AUTOPLAY's scenes and autopilot, where the cheats run
+			iosAutoplay_gameTick();
+		#endif
 
 			// For now just deal with a few controls.
 			if (inputMapping_getActionState(IADF_PDA_TOGGLE) == STATE_PRESSED)

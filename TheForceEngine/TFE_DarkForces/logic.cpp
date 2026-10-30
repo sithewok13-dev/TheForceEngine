@@ -17,6 +17,9 @@
 #include <TFE_Jedi/Serialization/serialization.h>
 #include <TFE_DarkForces/generator.h>
 #include <TFE_DarkForces/random.h>
+#ifdef TFE_IOS
+#include <TFE_DarkForces/iosGame.h>
+#endif
 #include <TFE_System/system.h>
 #include <TFE_Settings/settings.h>
 
@@ -241,6 +244,9 @@ namespace TFE_DarkForces
 
 	Logic* obj_setEnemyLogic(SecObject* obj, KEYWORD logicId)
 	{
+	#ifdef TFE_IOS
+		iosAutoplay_noteEnemy(obj, s32(logicId));	// (AUTOPLAY's crowds: what kind it is)
+	#endif
 		obj->flags |= OBJ_FLAG_AIM;
 		LogicSetupFunc* setupFunc = nullptr;
 

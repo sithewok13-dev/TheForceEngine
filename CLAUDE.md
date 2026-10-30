@@ -38,6 +38,19 @@ They own both the original Dark Forces and Nightdive's Dark Forces Remaster
   view, and every shot and blast, is hidden; nobody about gives "No one
   around for a group photo". Action Freeze and the cinematic burst draw the player as
   HUMAN3.3DO coloured as Kyle.
+  AUTOPLAY (MENU's tray) is a self-playing show for screen recordings:
+  `TFE_DarkForces/iosAutoplay.cpp`. START saves the game ("Before
+  AUTOPLAY", `autoplay.tfe`), loads a level (shuffled, or the one picked)
+  straight in at its own difficulty (no briefing, cutscene or agent progress
+  saved: hooks in `darkForcesMain.cpp` and `mission.cpp`), groups the
+  enemies by where they stand and visits the biggest first: each scene Kyle
+  is placed somewhere safe near a group, facing it (`player_iosPlace`), the
+  group gets copies of its own kinds (CROWD; at most 36 enemies about, 160
+  copies a level; kinds noted in `obj_setEnemyLogic`), everyone near is
+  woken (ALARM), and the autopilot fights through the input mapping and
+  mouse motion as the overlay does, with god mode and full ammo, until the
+  scene's time is up or the group is down. The overlay shows nothing
+  meanwhile (`IOSTOUCH_AUTOPLAY`); a tap loads the save back.
 - **iOS code:**
   - `ios/`: the app around the engine. `ios_app.cmake` (bundle, Info.plist,
     icon, support files, ANGLE frameworks), `Info.plist.in`, `Assets.xcassets`,

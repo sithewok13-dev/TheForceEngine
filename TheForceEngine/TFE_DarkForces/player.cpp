@@ -1261,6 +1261,39 @@ namespace TFE_DarkForces
 		}
 	}
 
+#ifdef TFE_IOS
+	// iOS: AUTOPLAY's cuts (iosAutoplay.cpp): the player stood at x, z on the
+	// sector's floor, turned to yaw, level and still (as LANTFH's teleport)
+	void player_iosPlace(RSector* sector, fixed16_16 x, fixed16_16 z, angle14_32 yaw)
+	{
+		if (!sector || !s_playerEye || !s_playerObject) { return; }
+		s_playerEye->posWS.x = x;
+		s_playerEye->posWS.z = z;
+		s_playerEye->posWS.y = sector->floorHeight;
+		s_playerObject->posWS = s_playerEye->posWS;
+		s_playerPos = s_playerEye->posWS;
+		s_playerYPos = sector->floorHeight;
+		s_playerYaw = yaw & ANGLE_MASK;
+		s_playerObject->yaw = s_playerYaw;
+		s_playerPitch = 0;
+		s_playerRoll = 0;
+		s_playerUpVel2 = 0;
+		s_playerUpVel = 0;
+		s_playerVelX = 0;
+		s_playerVelZ = 0;
+		s_externalVelX = 0;
+		s_externalVelZ = 0;
+		s_forwardSpd = 0;
+		s_strafeSpd = 0;
+
+		sector_addObject(sector, s_playerEye);
+		s_playerSector = sector;
+
+		player_setupEyeObject(s_playerEye);
+		player_setupCamera();
+	}
+#endif
+
 	void cheat_toggleHeightCheck()
 	{
 		s_limitStepHeight = ~s_limitStepHeight;

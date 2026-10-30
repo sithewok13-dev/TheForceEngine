@@ -95,7 +95,9 @@
        1x to begin with; held until its ring fills, 0.45 s, back to 1x),
        SENS (tilt aiming's sensitivity: 1.0x, 1.5x, 2.0x, 3.0x; 1.5x to
        begin with), GYRO (tilt aiming: OFF, TOUCH, ALWAYS; lit while on),
-       FPS (shows or hides a frame rate readout by QUICK SAVE), CAMERA
+       FPS (shows or hides a frame rate readout by QUICK SAVE), AUTOPLAY
+       (Dark Forces: starts the self-playing show; while it plays nothing
+       shows and a tap anywhere ends it, IOSTOUCH_AUTOPLAY), CAMERA
        (shows or hides CAMERA; held, its options open in a row under the
        tray), CHEAT (the sithewok cheat's switch), LEVEL (only while the
        cheat is on, single player: opens the list of the game's levels, in
@@ -158,6 +160,7 @@ enum {
   IOSTOUCH_GAMEPLAY,   /* a single-player game is being played */
   IOSTOUCH_CONSOLE,    /* the console is open over the game: only MENU (and its tray) */
   IOSTOUCH_PAUSED,     /* the game is paused: RESUME and MENU */
+  IOSTOUCH_AUTOPLAY,   /* Dark Forces: AUTOPLAY's show: nothing shows; a tap anywhere ends it */
 };
 
 /* What the HUD shows, so the buttons keep clear of it and the context
@@ -197,6 +200,8 @@ enum {
   IOSTOUCH_REQ_LEVEL     = 1 << 7, /* the cheat's list of levels: go to IOSTouch_TakeLevelPick() */
   IOSTOUCH_REQ_MAP       = 1 << 8, /* Dark Forces: the automap on or off (MAP) */
   IOSTOUCH_REQ_HD        = 1 << 9, /* Dark Forces: the HD graphics on or off (MENU's tray: HD) */
+  IOSTOUCH_REQ_AUTOPLAY  = 1 << 10, /* Dark Forces: start AUTOPLAY, as IOSTouch_GetAutoplayOptions says */
+  IOSTOUCH_REQ_AUTOPLAYSTOP = 1 << 11, /* Dark Forces: AUTOPLAY tapped: back to the game */
 };
 
 /* Buttons as the game reads them once per tick (IOSTouchInput.ulButtons) */
@@ -293,6 +298,22 @@ void IOSTouch_ShowMessage(const char *str, double fSeconds);
    the screen slides up to keep the field (fTop..fBottom: fractions of the
    screen's height) above it. */
 void IOSTouch_MenuKeyboard(void *pSDLWindow, int bTyping, float fTop, float fBottom);
+
+/* Dark Forces: AUTOPLAY, the self-playing show (MENU's tray's AUTOPLAY;
+   the game side is TFE_DarkForces/iosAutoplay.cpp). What it plays with:
+   remembered, as the AUTOPLAY panel last set it. */
+#define IOSAUTOPLAY_WEAPONS_ALL 0x7FEu /* weapon numbers 1..10 (Dark Forces' WeaponID + 1) */
+typedef struct IOSAutoplayOptions {
+  int iLevel;            /* 0: SHUFFLE ALL (another level each time one runs out); else PICK ONE: that level (1..) */
+  int iDifficulty;       /* 0 EASY, 1 MEDIUM, 2 HARD */
+  int iCrowd;            /* 1..3: each scene's enemies, and that many times over in copies of their own kinds */
+  int bAlarm;            /* each scene starts with everyone around woken and hunting */
+  int iSceneSeconds;     /* a scene's length (it ends sooner once its enemies are down) */
+  unsigned int ulWeapons; /* bit w: weapon number w ticked (IOSAUTOPLAY_WEAPONS_ALL: ALL) */
+  int bHud;              /* the game's HUD shows */
+} IOSAutoplayOptions;
+/* Main thread: the options AUTOPLAY starts with (IOSTOUCH_REQ_AUTOPLAY) */
+void IOSTouch_GetAutoplayOptions(IOSAutoplayOptions *pOptions);
 
 /* Provided by the HUD (Entities Common/HUD.cpp), main thread */
 void IOS_GetHudState(IOSTouchHud *pHud);

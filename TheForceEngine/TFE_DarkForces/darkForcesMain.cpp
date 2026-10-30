@@ -38,6 +38,9 @@
 #include <TFE_FileSystem/fileutil.h>
 #include <TFE_FileSystem/filestream.h>
 #include <TFE_ForceScript/scriptInterface.h>
+#ifdef TFE_IOS
+#include "iosGame.h"
+#endif
 #include <TFE_A11y/accessibility.h>
 #include <TFE_Audio/midiPlayer.h>
 #include <TFE_Audio/audioSystem.h>
@@ -702,6 +705,37 @@ namespace TFE_DarkForces
 				// TFE - Script system.
 				TFE_ScriptInterface::reset();
 
+			#ifdef TFE_IOS
+				// iOS: AUTOPLAY goes straight on to its next level, with no
+				// briefing or cutscene and nothing of the agent's saved
+				// (iosAutoplay.cpp). (The level's memory is let go before the
+				// next one starts, which then loads into it.)
+				const s32 autoplayLevel = iosAutoplay_nextLevel();
+				s32 autoplayMission = -1;
+				for (s32 i = 0; autoplayLevel > 0 && i < TFE_ARRAYSIZE(s_cutsceneData); i++)
+				{
+					if (s_cutsceneData[i].levelIndex == autoplayLevel && s_cutsceneData[i].nextGameMode == GMODE_MISSION)
+					{
+						autoplayMission = i;
+						break;
+					}
+				}
+				if (autoplayMission >= 0)
+				{
+					region_clear(s_levelRegion);
+					bitmap_clearLevelData();
+					bitmap_setAllocator(s_gameRegion);
+					level_freeAllAssets();
+					TFE_A11Y::clearActiveCaptions();
+
+					agent_setNextLevelByIndex(autoplayLevel);
+					s_runGameState.cutsceneIndex = autoplayMission;
+					s_runGameState.abortLevel = JFALSE;
+					s_invalidLevelIndex = JFALSE;
+					startNextMode();
+					break;
+				}
+			#endif
 				if (!s_levelComplete)
 				{
 					s_runGameState.abortLevel = JTRUE;
