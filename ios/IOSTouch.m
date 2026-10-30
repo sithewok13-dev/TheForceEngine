@@ -1050,8 +1050,8 @@ static int _iApPanel = APPANEL_NONE;
 static int _bLevelListForAutoplay = 0;
 // AUTOPLAY's CONTROLS ON, while the show plays (IOSTouch_SetAutoplayDisplay):
 // the controls showing as in play; the stick shown (its knob, -1..1, right
-// and down) and where it sits, a right thumb's fingertip (where it rests,
-// how far its drag has gone, points), the buttons lit (IOSTOUCH_FIRE...)
+// and down) and where it sits, the buttons lit (IOSTOUCH_FIRE...); (the
+// right thumb's fingertip is kept but not drawn)
 static int _bApShow = 0;
 static float _fApStickX = 0.0f, _fApStickY = 0.0f;
 static double _fApStickOX = 0.0, _fApStickOY = 0.0;
@@ -4261,9 +4261,8 @@ typedef struct {
   UIButton *apAll;
   UIButton *apDone;
   int iApShown;
-  // CONTROLS ON: the right thumb's fingertip; whether the show's controls,
-  // and which lit buttons, were last shown
-  UIView *apThumbDot;
+  // CONTROLS ON: whether the show's controls, and which lit buttons, were
+  // last shown
   int bApShowShown;
   unsigned int ulApLitShown;
   unsigned int uApChangesShown;
@@ -4482,10 +4481,6 @@ static CAShapeLayer *IOSTouch_MakeHoldRing(CGFloat r)
     stickKnob.hidden = YES;
     [self addSubview:stickBase];
     [self addSubview:stickKnob];
-    // (AUTOPLAY's CONTROLS: a right thumb's fingertip, faint)
-    apThumbDot = IOSTouch_MakeCircle(20, 0.12);
-    apThumbDot.hidden = YES;
-    [self addSubview:apThumbDot];
 
     [self makeOpacity];
 
@@ -5953,8 +5948,8 @@ static UILabel *IOSTouch_AutoplayHint(NSString *str, UIView *parent)
   }
 }
 
-// CONTROLS ON, every frame: the thumbs (the stick, the fingertip), and the
-// buttons lit as the autopilot uses them
+// CONTROLS ON, every frame: the stick under the left thumb, and the buttons
+// lit as the autopilot uses them (no right thumb is drawn: the owner's call)
 - (void)refreshAutoplayThumbs
 {
   // (the show's gestures felt: nothing shows for them)
@@ -5971,21 +5966,9 @@ static UILabel *IOSTouch_AutoplayHint(NSString *str, UIView *parent)
     bApShowShown = bShow;
     ulApLitShown = _ulApLit;
     [self refreshButtonLooks];
+    if (!bShow) [self refreshStick];
   }
-  if (bShow) {
-    [self refreshStick];
-    const CGSize sz = self.bounds.size;
-    apThumbDot.center = CGPointMake((CGFloat)(_fApDotX * sz.width + _fApDragX), (CGFloat)(_fApDotY * sz.height + _fApDragY));
-    apThumbDot.alpha = 0.6 * _fCtrlOpacity;
-    if (apThumbDot.hidden) {
-      apThumbDot.hidden = NO;
-      [self bringSubviewToFront:apThumbDot];
-    }
-  }
-  else if (!apThumbDot.hidden) {
-    apThumbDot.hidden = YES;
-    [self refreshStick];
-  }
+  if (bShow) [self refreshStick];
 }
 
 // The rows say what's set

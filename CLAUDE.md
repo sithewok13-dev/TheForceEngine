@@ -67,9 +67,9 @@ They own both the original Dark Forces and Nightdive's Dark Forces Remaster
   (`IOSTOUCH_AUTOPLAY`) through its loads, so no touch reaches the game;
   it shows nothing, or with CONTROLS ON the controls as in play, worked as
   a player's thumbs would from what the autopilot does
-  (`IOSTouch_SetAutoplayDisplay`: the stick under a left thumb, a faint
-  right fingertip dragging with the look, FIRE, ALT, JUMP, CROUCH and NEXT
-  WPN lit as used; display only).
+  (`IOSTouch_SetAutoplayDisplay`: the stick under a left thumb, FIRE, ALT,
+  JUMP, CROUCH and NEXT WPN lit as used; no right thumb is drawn, the
+  owner's call; display only).
 - **iOS code:**
   - `ios/`: the app around the engine. `ios_app.cmake` (bundle, Info.plist,
     icon, support files, ANGLE frameworks), `Info.plist.in`, `Assets.xcassets`,

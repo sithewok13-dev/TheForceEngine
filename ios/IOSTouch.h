@@ -323,8 +323,8 @@ typedef struct IOSAutoplayOptions {
    its panel last set them (the app's settings) */
 void IOSTouch_GetAutoplayOptions(IOSAutoplayOptions *pOptions);
 /* What the autopilot is doing, for CONTROLS ON: the overlay then shows the
-   controls during the show as in play, a left thumb on the move stick, a
-   right thumb's fingertip dragging to look, and the buttons it uses lit.
+   controls during the show as in play, a left thumb on the move stick and
+   the buttons it uses lit (the right thumb's fields aren't drawn).
    Display only: nothing it shows is a touch; the show's gestures still work. */
 typedef struct IOSAutoplayDisplay {
   int bOn;                 /* show the controls (CONTROLS ON, the show playing) */
