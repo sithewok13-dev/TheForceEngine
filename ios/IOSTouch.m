@@ -4173,6 +4173,7 @@ typedef struct {
   UIView *messagesBack;   // over the HUD's unread messages box while a finger is on it...
   CAShapeLayer *messagesRing; // ...and its hold's ring, round the box
   UIView *trayBack;       // behind MENU's tray
+  UILabel *versionLabel;  // the app's version, just under the open tray
   UILabel *fpsLabel;      // the FPS readout...
   int iFpsLabel;          // ...the number it says (-1: none yet)
   int bFpsSaved;          // whether the app's settings say it shows
@@ -4308,6 +4309,20 @@ typedef struct {
 
 static void IOSTouch_AskPhotos(void);
 
+// The version line under the tray, from the app's Info.plist: "v1.0", and the
+// build number after it, "v1.0 (45)", when there is one that says more
+static NSString *IOSTouch_VersionText(void)
+{
+  NSDictionary *info = [[NSBundle mainBundle] infoDictionary];
+  NSString *ver = info[@"CFBundleShortVersionString"];
+  NSString *build = info[@"CFBundleVersion"];
+  if (ver.length == 0) ver = @"?";
+  if (build.length > 0 && ![build isEqualToString:ver]) {
+    return [NSString stringWithFormat:@"v%@ (%@)", ver, build];
+  }
+  return [NSString stringWithFormat:@"v%@", ver];
+}
+
 @implementation IOSTouchOverlay
 
 static UIView *IOSTouch_MakeCircle(CGFloat radius, CGFloat alpha)
@@ -4422,6 +4437,16 @@ static CAShapeLayer *IOSTouch_MakeHoldRing(CGFloat r)
     trayBack.userInteractionEnabled = NO;
     trayBack.hidden = YES;
     [self insertSubview:trayBack belowSubview:aButtonViews[BTN_TRAYLOOK]];
+    // The app's version under the tray while it is open: small dim text, not
+    // a button, so it takes no touches and moves nothing
+    versionLabel = [[UILabel alloc] initWithFrame:CGRectZero];
+    versionLabel.textAlignment = NSTextAlignmentCenter;
+    versionLabel.textColor = [UIColor colorWithWhite:1.0 alpha:0.5];
+    versionLabel.font = [UIFont monospacedDigitSystemFontOfSize:10 weight:UIFontWeightMedium];
+    versionLabel.userInteractionEnabled = NO;
+    versionLabel.text = IOSTouch_VersionText();
+    versionLabel.hidden = YES;
+    [self insertSubview:versionLabel aboveSubview:trayBack];
     // GYRO and SENS say what they are set to on a second line (labels set
     // in refreshButtonLooks), sized for the longest
     IOSTouch_GyroSetup();
@@ -4765,6 +4790,7 @@ static void IOSTouch_CheatEmblemPaths(CGFloat cx, CGFloat cy, CGFloat r, UIBezie
       aButtonViews[i].center = CGPointMake(_aButtons[i].x, _aButtons[i].y);
     }
     trayBack.frame = CGRectMake(_rTrayBack.x0, _rTrayBack.y0, _rTrayBack.x1 - _rTrayBack.x0, _rTrayBack.y1 - _rTrayBack.y0);
+    versionLabel.frame = CGRectMake(_rTrayBack.x0, _rTrayBack.y1 + 2, _rTrayBack.x1 - _rTrayBack.x0, 13);
     camRowBack.frame = CGRectMake(_rCamRowBack.x0, _rCamRowBack.y0, _rCamRowBack.x1 - _rCamRowBack.x0, _rCamRowBack.y1 - _rCamRowBack.y0);
     camOptBack.frame = CGRectMake(_rCamOptBack.x0, _rCamOptBack.y0, _rCamOptBack.x1 - _rCamOptBack.x0, _rCamOptBack.y1 - _rCamOptBack.y0);
     [self placeOpacity];
@@ -4905,6 +4931,7 @@ static void IOSTouch_CheatEmblemPaths(CGFloat cx, CGFloat cy, CGFloat r, UIBezie
     aButtonViews[i].center = CGPointMake(_aButtons[i].x, _aButtons[i].y);
   }
   trayBack.frame = CGRectMake(_rTrayBack.x0, _rTrayBack.y0, _rTrayBack.x1 - _rTrayBack.x0, _rTrayBack.y1 - _rTrayBack.y0);
+  versionLabel.frame = CGRectMake(_rTrayBack.x0, _rTrayBack.y1 + 2, _rTrayBack.x1 - _rTrayBack.x0, 13);
   fpsLabel.center = CGPointMake(_fFpsX, _fFpsY);
   _fViewH = H;
   camRowBack.frame = CGRectMake(_rCamRowBack.x0, _rCamRowBack.y0, _rCamRowBack.x1 - _rCamRowBack.x0, _rCamRowBack.y1 - _rCamRowBack.y0);
@@ -5046,6 +5073,7 @@ static void IOSTouch_CheatEmblemPaths(CGFloat cx, CGFloat cy, CGFloat r, UIBezie
     }
   }
   if (trayBack.hidden == _bTrayOpen) trayBack.hidden = !_bTrayOpen;
+  if (versionLabel.hidden == _bTrayOpen) versionLabel.hidden = !_bTrayOpen;
   // OPACITY's slider while it is out (and the tray, and OPACITY in it, show)
   const int bOpacityShown = _bOpacityOpen && _bTrayOpen && IOSTouch_IsShown(BTN_TRAYOPACITY);
   if (opacityPanel.hidden == bOpacityShown) {
