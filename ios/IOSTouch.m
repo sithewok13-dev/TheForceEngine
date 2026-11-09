@@ -4268,7 +4268,7 @@ typedef struct {
   UIView *messagesBack;   // over the HUD's unread messages box while a finger is on it...
   CAShapeLayer *messagesRing; // ...and its hold's ring, round the box
   UIView *trayBack;       // behind MENU's tray
-  UILabel *versionLabel;  // the app's version, just under the open tray
+  UILabel *versionLabel;  // the build stamp, just under the open tray
   UILabel *fpsLabel;      // the FPS readout...
   int iFpsLabel;          // ...the number it says (-1: none yet)
   int bFpsSaved;          // whether the app's settings say it shows
@@ -4410,18 +4410,25 @@ typedef struct {
 
 static void IOSTouch_AskPhotos(void);
 
-// The version line under the tray, from the app's Info.plist: "v1.0", and the
-// build number after it, "v1.0 (45)", when there is one that says more
+// The build stamp under the tray, from the app's Info.plist: SWBuildNumber
+// and SWBuildDate (YYYY-MM-DD, UTC), which CI writes, as "build 80 · Nov 9"
+// (the owner compares it with the builds page). A build without them
+// (local, or a date it can't read): "build dev".
 static NSString *IOSTouch_VersionText(void)
 {
+  static const char *aMonth[12] = { "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                                    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
   NSDictionary *info = [[NSBundle mainBundle] infoDictionary];
-  NSString *ver = info[@"CFBundleShortVersionString"];
-  NSString *build = info[@"CFBundleVersion"];
-  if (ver.length == 0) ver = @"?";
-  if (build.length > 0 && ![build isEqualToString:ver]) {
-    return [NSString stringWithFormat:@"v%@ (%@)", ver, build];
+  id number = info[@"SWBuildNumber"];
+  id date = info[@"SWBuildDate"];
+  int y, m, d;
+  if ([number isKindOfClass:[NSString class]] && [(NSString *)number length] > 0
+      && [date isKindOfClass:[NSString class]]
+      && sscanf([(NSString *)date UTF8String], "%4d-%2d-%2d", &y, &m, &d) == 3
+      && m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+    return [NSString stringWithFormat:@"build %@ \u00B7 %s %d", number, aMonth[m - 1], d];
   }
-  return [NSString stringWithFormat:@"v%@", ver];
+  return @"build dev";
 }
 
 @implementation IOSTouchOverlay
@@ -4543,7 +4550,7 @@ static CAShapeLayer *IOSTouch_MakeHoldRing(CGFloat r)
     versionLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     versionLabel.textAlignment = NSTextAlignmentCenter;
     versionLabel.textColor = [UIColor colorWithWhite:1.0 alpha:0.5];
-    versionLabel.font = [UIFont monospacedDigitSystemFontOfSize:10 weight:UIFontWeightMedium];
+    versionLabel.font = [UIFont monospacedDigitSystemFontOfSize:11 weight:UIFontWeightMedium];
     versionLabel.userInteractionEnabled = NO;
     versionLabel.text = IOSTouch_VersionText();
     versionLabel.hidden = YES;

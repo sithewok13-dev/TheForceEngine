@@ -3,6 +3,10 @@
 # packages it as an UNSIGNED .ipa (ad-hoc signature only), kept as a workflow
 # artifact. Sideload it (SideStore, AltStore, Sideloadly).
 #
+# A push to ios also publishes the .ipa to the public "ios-latest"
+# prerelease (never marked latest), whose text starts "Build <run> · <date>",
+# the same build stamp the app shows under MENU's tray.
+#
 # No game data is built in or bundled: the app reads the player's own Dark
 # Forces files from its Documents folder (Files > On My iPhone > Dark Forces).
 # The package step fails if a game archive ever ends up in the app.
@@ -33,6 +37,10 @@ env:
   ANGLE_REV: 4b7308a36376199c095ccb0ab69b773daa8b9fbe
   ANGLE_CACHE_VERSION: v1
 
+# publishing ios-latest needs to write releases
+permissions:
+  contents: write
+
 jobs:
   build:
     name: Dark Forces
@@ -43,6 +51,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      # The build stamp: this run's number and today's date (UTC), in the app's
+      # Info.plist (SWBuildNumber, SWBuildDate: "build 80 · Nov 9" under the
+      # tray) and on ios-latest ("Build 80 · 2026-11-09")
+      - name: Build stamp
+        run: echo "BUILD_DATE=$(date -u +%Y-%m-%d)" >> "$GITHUB_ENV"
 
       # The newest release Xcode on the runner rather than its default.
       - name: Select newest Xcode
@@ -169,7 +183,8 @@ jobs:
               -DCMAKE_BUILD_TYPE=Release \
               -DCMAKE_PREFIX_PATH="$DEPS" -DCMAKE_FIND_ROOT_PATH="$DEPS" \
               -DANGLE_ROOT="$PWD/angle-prebuilt" \
-              -DIOS_BUILD_NUMBER="${{ github.run_number }}" &&
+              -DIOS_BUILD_NUMBER="${{ github.run_number }}" \
+              -DIOS_BUILD_DATE="$BUILD_DATE" &&
             cmake --build build-ios -- -k 0   # (every error at once, not just the first)
           } > build.log 2>&1
           status=$?
@@ -221,7 +236,9 @@ jobs:
             echo "::error::Game data found in the .ipa"
             exit 1
           fi
-          plutil -p Payload/DarkForces.app/Info.plist | grep -E 'CFBundleIdentifier|CFBundleDisplayName|CFBundleVersion|MinimumOSVersion|CFBundleIcons'
+          plutil -p Payload/DarkForces.app/Info.plist | grep -E 'CFBundleIdentifier|CFBundleDisplayName|CFBundleVersion|MinimumOSVersion|CFBundleIcons|SWBuild'
+          test "$(plutil -extract SWBuildNumber raw -o - Payload/DarkForces.app/Info.plist)" = "${{ github.run_number }}"
+          test "$(plutil -extract SWBuildDate raw -o - Payload/DarkForces.app/Info.plist)" = "$BUILD_DATE"
           lipo -info Payload/DarkForces.app/DarkForces
           # ANGLE is linked and bundled, Apple's OpenGL ES isn't
           otool -L Payload/DarkForces.app/DarkForces | grep -E 'libEGL|libGLESv2'
@@ -238,3 +255,19 @@ jobs:
           name: DarkForces-iOS-unsigned.ipa
           path: DarkForces-iOS-unsigned.ipa
           if-no-files-found: error
+
+      # The public test build: pushes to ios only (and manual runs of ios)
+      - name: Publish to "ios-latest" release
+        if: github.ref == 'refs/heads/ios'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ios-latest
+          target_commitish: ${{ github.sha }}
+          name: iOS latest build
+          prerelease: true
+          make_latest: false
+          body: |
+            Build ${{ github.run_number }} · ${{ env.BUILD_DATE }}
+            Test build of Dark Forces for iOS, rebuilt on every push. Game files are not included.
+          files: DarkForces-iOS-unsigned.ipa
+          fail_on_unmatched_files: true

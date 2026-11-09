@@ -98,8 +98,9 @@ They own both the original Dark Forces and Nightdive's Dark Forces Remaster
     system MIDI and the editor are off.
 - **CI:** `.github/workflows/ios.yml` (macOS): ANGLE built once and cached
   (`ANGLE_REV`, same revision as the DOOM 3 and Jedi Knight ports), deps cached,
-  artifacts `DarkForces-iOS-unsigned.ipa` and `build-log`; fails if game data is
-  in the app. Upstream's `ubuntu-gcc.yml` only runs on `master`.
+  artifacts `DarkForces-iOS-unsigned.ipa` and `build-log`, and the .ipa on the
+  `ios-latest` prerelease; fails if game data is in the app. Upstream's
+  `ubuntu-gcc.yml` only runs on `master`.
 - **Docs:** `docs/ios/README.md` (install and where the game files go).
 
 ## Testing without a Mac
@@ -127,8 +128,9 @@ They own both the original Dark Forces and Nightdive's Dark Forces Remaster
     those, no AI model names in commits, code or docs.
   - No PRs unless asked. Never stash, reset or check out over a working tree that
     another job may be editing. Push with `git push -u origin ios`.
-- **Releases:** none yet. Before any public release or public text, build a
-  preview and wait for the owner's explicit go.
+- **Releases:** no versioned release yet; each push to `ios` updates the
+  public `ios-latest` prerelease (the owner's go). Before any other public
+  release or public text, build a preview and wait for the owner's explicit go.
 - **Touch controls standard** (shared with the owner's other ports; keep it the
   same in stage 2):
   - Move stick where the left thumb lands; drag elsewhere to look.
@@ -137,9 +139,11 @@ They own both the original Dark Forces and Nightdive's Dark Forces Remaster
   - MENU: tap = game menu; hold 0.45 s = tray with SENS, GYRO, OPACITY, FPS,
     keyboard. OPACITY: tap = a slider under the tray (20-100%, 5% steps) for
     every control but the tray; held 0.45 s = back to 100%. Remembered.
-    Under the open tray, centred, the app's version in small dim text, not a
-    button ("v1.0 (45)": CFBundleShortVersionString, then CFBundleVersion,
-    the CI run number, when it differs).
+    Under the open tray, centred, the build stamp in small dim text, not a
+    button ("build 80 · Nov 9": SWBuildNumber, CI's run number, and
+    SWBuildDate, UTC, from Info.plist; "build dev" without them). Each push
+    to ios publishes the public `ios-latest` prerelease, whose text starts
+    "Build 80 · 2026-11-09" (the owner's builds page reads it).
   - FPS (tray): tap = show/hide the FPS readout; held 0.45 s (ring) = 60 <->
     120 ("FPS\n60", default 60) with a toast and a haptic. Remembered. A
     display link asks the screen for it and TFE's own frame limit follows it

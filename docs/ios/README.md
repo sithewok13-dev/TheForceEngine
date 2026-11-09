@@ -14,9 +14,11 @@ of Dark Forces: the **Dark Forces Remaster** (Steam or GOG) or the **original**
 
 The app comes as an unsigned `.ipa` file. Download the newest
 `DarkForces-iOS-unsigned.ipa` from the
-[iOS builds](https://github.com/sithewok13-dev/TheForceEngine/actions/workflows/ios.yml)
-(open the newest green run, then the file under *Artifacts*; it downloads as a
-`.zip` with the `.ipa` inside).
+[iOS latest build](https://github.com/sithewok13-dev/TheForceEngine/releases/tag/ios-latest),
+a test build, rebuilt on every change. The first line of its description,
+such as *Build 80 · 2026-11-09*, matches the small text under the open MENU
+tray in the app (*build 80 · Nov 9*), so you can tell whether yours is the
+newest.
 
 An iPhone only runs apps signed with an Apple certificate, so sign and install
 it with a sideloading tool, as for any `.ipa`:

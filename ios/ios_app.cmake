@@ -5,6 +5,7 @@
 set(IOS_BUNDLE_ID "com.sithewok.darkforces" CACHE STRING "The app's bundle id")
 set(IOS_VERSION "1.0" CACHE STRING "CFBundleShortVersionString")
 set(IOS_BUILD_NUMBER "1" CACHE STRING "CFBundleVersion (CI passes its run number)")
+set(IOS_BUILD_DATE "" CACHE STRING "The build's UTC date, YYYY-MM-DD (CI passes it)")
 set(IOS_EXECUTABLE "DarkForces")
 
 if(NOT ANGLE_ROOT)
@@ -25,6 +26,13 @@ target_sources(tfe PRIVATE ${IOS_APP_OBJC_SOURCES} "${IOS_APP_DIR}/iosAngle.cpp"
 set_source_files_properties(${IOS_APP_OBJC_SOURCES} PROPERTIES COMPILE_FLAGS "-fobjc-arc")
 target_include_directories(tfe PRIVATE "${IOS_APP_DIR}" "${ANGLE_ROOT}/include")
 
+# The build stamp under MENU's tray ("build 80 · Nov 9", IOSTouch.m):
+# SWBuildNumber and SWBuildDate, only in CI's builds (which pass
+# IOS_BUILD_DATE); any other build leaves them out and shows "build dev".
+set(IOS_BUILD_STAMP_KEYS "")
+if(NOT "${IOS_BUILD_DATE}" STREQUAL "")
+	set(IOS_BUILD_STAMP_KEYS "<key>SWBuildNumber</key>\n\t<string>${IOS_BUILD_NUMBER}</string>\n\t<key>SWBuildDate</key>\n\t<string>${IOS_BUILD_DATE}</string>")
+endif()
 configure_file("${IOS_APP_DIR}/Info.plist.in" "${CMAKE_CURRENT_BINARY_DIR}/Info.plist" @ONLY)
 set_target_properties(tfe PROPERTIES
 	MACOSX_BUNDLE TRUE
