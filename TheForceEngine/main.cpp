@@ -787,6 +787,8 @@ int main(int argc, char* argv[])
 		// mission is being played, and add their stick, buttons and requests
 		// to this frame's input
 		TFE_DarkForces::iosGame_frame(s_curState == APP_STATE_GAME && s_curGame && s_curGame->canSave(), frame);
+		// ...and the frame limit at the rate chosen in MENU's tray (60 or 120)
+		TFE_DarkForces::iosGame_frameRate();
 	#endif
 
 		// Can we save?

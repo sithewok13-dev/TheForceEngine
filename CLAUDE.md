@@ -140,6 +140,12 @@ They own both the original Dark Forces and Nightdive's Dark Forces Remaster
     Under the open tray, centred, the app's version in small dim text, not a
     button ("v1.0 (45)": CFBundleShortVersionString, then CFBundleVersion,
     the CI run number, when it differs).
+  - FPS (tray): tap = show/hide the FPS readout; held 0.45 s (ring) = 60 <->
+    120 ("FPS\n60", default 60) with a toast and a haptic. Remembered. A
+    display link asks the screen for it and TFE's own frame limit follows it
+    (`iosGame_frameRate`, which also logs fps and ms per frame every 5 s of
+    play). Dark Forces runs on real time (145 ticks/s, fractional ticks), so
+    120 is safe.
   - GYRO: OFF (default) / TOUCH (aims while either thumb is down; lifting both
     freezes the view) / ALWAYS. SENS 1.0/1.5/2.0/3.0, default 1.5. Remembered.
   - NEXT WPN: tap = next; a 10 pt slide opens the weapon wheel at once; a 0.3 s

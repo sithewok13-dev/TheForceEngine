@@ -16,6 +16,8 @@
 #include <TFE_Input/inputMapping.h>
 #include <TFE_FrontEndUI/frontEndUi.h>
 #include <TFE_Settings/settings.h>
+#include <TFE_System/frameLimiter.h>
+#include <TFE_System/system.h>
 #include <TFE_RenderBackend/renderBackend.h>
 #include <TFE_FileSystem/paths.h>
 #include <TFE_FileSystem/fileutil.h>
@@ -552,6 +554,47 @@ namespace TFE_DarkForces
 		*dy = iy;
 	}
 
+	void iosGame_frameRate()
+	{
+		TFE_Settings_Graphics* graphics = TFE_Settings::getGraphicsSettings();
+		const s32 maxFps = IOSTouch_MaxFps();
+		if (graphics->frameRateLimit != maxFps)
+		{
+			graphics->frameRateLimit = maxFps;
+			TFE_System::frameLimiter_set(f64(maxFps));
+			TFE_System::logWrite(LOG_MSG, "iOS", "Frame rate: %d (asked of the screen; the game's frame limit)", maxFps);
+		}
+
+		// (the log: what a mission really runs at, every 5 s of play)
+		static u64 s_prev = 0, s_start = 0;
+		static u32 s_frames = 0;
+		static f64 s_worst = 0.0;
+		const u64 now = SDL_GetPerformanceCounter();
+		const f64 freq = f64(SDL_GetPerformanceFrequency());
+		const bool playing = s_mode == IOSTOUCH_GAMEPLAY || s_mode == IOSTOUCH_AUTOPLAY;
+		if (!playing || !s_prev || f64(now - s_prev) / freq > 1.0)
+		{
+			// (not playing, or after a pause or a load: from now on)
+			s_prev = s_start = playing ? now : 0;
+			s_frames = 0;
+			s_worst = 0.0;
+			return;
+		}
+		const f64 dt = f64(now - s_prev) / freq;
+		s_prev = now;
+		s_frames++;
+		if (dt > s_worst) { s_worst = dt; }
+		const f64 span = f64(now - s_start) / freq;
+		if (span >= 5.0)
+		{
+			TFE_System::logWrite(LOG_MSG, "iOS", "Frames: %.1f fps, %.2f ms per frame (worst %.1f ms), limit %d",
+				f64(s_frames) / span, span * 1000.0 / f64(s_frames), s_worst * 1000.0, maxFps);
+			s_start = now;
+			s_frames = 0;
+			s_worst = 0.0;
+		}
+	}
+
 	void iosGame_hide()
 	{
 		setHold(false);
@@ -605,6 +648,12 @@ using namespace TFE_DarkForces;
 
 extern "C"
 {
+	// (the overlay) a line in the game's log
+	void IOS_Log(const char* str)
+	{
+		TFE_System::logWrite(LOG_MSG, "iOS", "%s", str ? str : "");
+	}
+
 	int IOS_ReadFrameRGBA(int w, int h, unsigned char* p)
 	{
 		u32 fw = 0, fh = 0;

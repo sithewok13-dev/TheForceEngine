@@ -20,6 +20,12 @@ namespace TFE_DarkForces
 	// state), and hands the game what the touches asked for.
 	void iosGame_frame(bool inMission, u32 framesDrawn);
 
+	// Once a frame, before the game runs: the game's frame limit follows the
+	// frame rate chosen in MENU's tray (FPS held: 60 or 120; TFE's own setting,
+	// so the saved settings can't override it), and while a mission is played
+	// a line in the log every 5 s: the frames a second, ms per frame
+	void iosGame_frameRate();
+
 	// (the input mapping) the look drag and tilt aiming since the last call,
 	// in mouse counts
 	void iosGame_takeLook(s32* dx, s32* dy);

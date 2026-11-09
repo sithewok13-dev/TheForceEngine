@@ -305,6 +305,11 @@ void IOSTouch_ShowMessage(const char *str, double fSeconds);
    the screen slides up to keep the field (fTop..fBottom: fractions of the
    screen's height) above it. */
 void IOSTouch_MenuKeyboard(void *pSDLWindow, int bTyping, float fTop, float fBottom);
+/* Main thread, every frame: the frame rate the player chose (MENU's tray's
+   FPS held: 60, the default, or 120), remembered. The screen is asked for it
+   (a display link; the first call sets that up), and the game keeps its frame
+   limit at it (main.cpp). */
+int IOSTouch_MaxFps(void);
 
 /* Dark Forces: AUTOPLAY, the self-playing show (MENU's tray's AUTOPLAY;
    the game side is TFE_DarkForces/iosAutoplay.cpp). What it plays with:
